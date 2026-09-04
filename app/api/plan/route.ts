@@ -155,6 +155,39 @@ async function getWikipediaPlaces(latitude: number, longitude: number) {
   });
 }
 
+async function getWikipediaCategoryPlaces(name: string) {
+  type WikiResponse = { query?: { pages?: Record<string, { pageid: number; title: string; extract?: string; fullurl?: string; thumbnail?: { source: string }; coordinates?: Array<{ lat: number; lon: number }> }> } };
+  const categorySpecs = [
+    { name: `Tourist attractions in ${name}`, category: 'attraction' },
+    { name: `Museums in ${name}`, category: 'museum' },
+    { name: `Parks in ${name}`, category: 'park' },
+  ];
+  const results = await Promise.allSettled(categorySpecs.map(async (spec) => {
+    const params = new URLSearchParams({
+      action: 'query', generator: 'categorymembers', gcmtitle: `Category:${spec.name}`, gcmtype: 'page', gcmlimit: '25',
+      prop: 'coordinates|pageimages|extracts|info', inprop: 'url', piprop: 'thumbnail', pithumbsize: '900',
+      exintro: '1', explaintext: '1', exsentences: '2', format: 'json', origin: '*',
+    });
+    const data = await fetchJson<WikiResponse>(`https://en.wikipedia.org/w/api.php?${params}`);
+    return Object.values(data.query?.pages || {}).flatMap<Place>((page) => {
+      const coordinates = page.coordinates?.[0];
+      if (!coordinates) return [];
+      return [{
+        id: `wiki-${page.pageid}`,
+        name: page.title,
+        latitude: coordinates.lat,
+        longitude: coordinates.lon,
+        category: spec.category,
+        description: cleanText(page.extract || `${spec.category} in ${name}.`),
+        imageUrl: page.thumbnail?.source,
+        sourceUrl: page.fullurl || `https://en.wikipedia.org/?curid=${page.pageid}`,
+        source: 'Wikipedia',
+      }];
+    });
+  }));
+  return results.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
+}
+
 function rankPlaces(places: Place[], interests: string[], prompt: string) {
   const intent = `${interests.join(' ')} ${prompt}`.toLowerCase();
   const terms = Object.entries(INTEREST_TERMS).flatMap(([interest, values]) => intent.includes(interest) ? values : []);
@@ -182,12 +215,25 @@ async function getWeather(latitude: number, longitude: number, startDate: string
     latitude: String(latitude), longitude: String(longitude), timezone: 'auto', start_date: startDate, end_date: endDate,
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
   });
-  const data = await fetchJson<WeatherResponse>(`https://api.open-meteo.com/v1/forecast?${params}`);
+  let data: WeatherResponse;
+  let dateAligned = true;
+  try {
+    data = await fetchJson<WeatherResponse>(`https://api.open-meteo.com/v1/forecast?${params}`);
+  } catch {
+    dateAligned = false;
+    const fallbackParams = new URLSearchParams({
+      latitude: String(latitude), longitude: String(longitude), timezone: 'auto', forecast_days: '7',
+      daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    });
+    data = await fetchJson<WeatherResponse>(`https://api.open-meteo.com/v1/forecast?${fallbackParams}`);
+  }
   const daily = data.daily;
   if (!daily?.time?.length) return { available: false, status: 'unavailable', note: 'No forecast was returned for these dates.' };
   return {
     available: true,
     status: 'live',
+    dateAligned,
+    note: dateAligned ? undefined : 'Showing the current 7-day destination forecast; refresh closer to departure for trip dates.',
     timezone: data.timezone,
     daily: daily.time.map((date, index) => ({
       date,
@@ -259,22 +305,25 @@ export async function POST(request: Request) {
   }
   if (!geo) return jsonError(`We could not find “${destination}”. Try a city and country.`);
 
-  const [osmResult, wikiResult, weatherResult, summaryResult] = await Promise.allSettled([
+  const [osmResult, wikiResult, categoryResult, weatherResult, summaryResult] = await Promise.allSettled([
     getPlaces(geo.latitude, geo.longitude),
     getWikipediaPlaces(geo.latitude, geo.longitude),
+    getWikipediaCategoryPlaces(geo.name),
     getWeather(geo.latitude, geo.longitude, startDate, endDate),
     getDestinationSummary(geo.name),
   ]);
 
   const osmPlaces = osmResult.status === 'fulfilled' ? osmResult.value : [];
   const wikiPlaces = wikiResult.status === 'fulfilled' ? wikiResult.value : [];
+  const categoryPlaces = categoryResult.status === 'fulfilled' ? categoryResult.value : [];
   const unique = new Map<string, Place>();
-  [...wikiPlaces, ...osmPlaces].forEach((place) => {
+  [...categoryPlaces, ...osmPlaces, ...wikiPlaces].forEach((place) => {
     const key = place.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const current = unique.get(key);
-    if (!current || (!current.imageUrl && place.imageUrl)) unique.set(key, place);
+    if (!unique.has(key)) unique.set(key, place);
   });
-  const ranked = rankPlaces([...unique.values()], interests, body.prompt || '');
+  const lowValue = /\b(war|siege|battle|federation|hospital|ministry|embassy|school|company|district|parish)\b/i;
+  const candidates = [...unique.values()].filter((place) => place.name.toLowerCase() !== geo.name.toLowerCase() && !lowValue.test(`${place.name} ${place.description}`));
+  const ranked = rankPlaces(candidates, interests, body.prompt || '');
   const needed = Math.min(18, tripDays * (pace === 'slow' ? 2 : 3));
   const selected = ranked.slice(0, needed);
   if (selected.length < Math.min(4, needed)) {
@@ -320,6 +369,7 @@ export async function POST(request: Request) {
   const warnings = [
     ...(osmResult.status === 'rejected' ? ['OpenStreetMap place details were unavailable; Wikipedia places are shown.'] : []),
     ...(wikiResult.status === 'rejected' ? ['Wikipedia context and imagery were unavailable.'] : []),
+    ...(categoryResult.status === 'rejected' ? ['Wikipedia attraction categories were unavailable.'] : []),
     ...(weatherResult.status === 'rejected' ? ['Weather is temporarily unavailable.'] : []),
   ];
 
