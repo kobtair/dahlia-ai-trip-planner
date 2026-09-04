@@ -202,6 +202,27 @@ function rankPlaces(places: Place[], interests: string[], prompt: string) {
     .map(({ place }) => place);
 }
 
+function clusterIntoDays(places: Place[], dayCount: number, perDay: number) {
+  const remaining = [...places];
+  return Array.from({ length: dayCount }, () => {
+    const day: Place[] = [];
+    const seed = remaining.shift();
+    if (!seed) return day;
+    day.push(seed);
+    while (day.length < perDay && remaining.length) {
+      const previous = day[day.length - 1];
+      let nearestIndex = 0;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      remaining.forEach((candidate, index) => {
+        const distance = haversineKm(previous, candidate);
+        if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
+      });
+      day.push(remaining.splice(nearestIndex, 1)[0]);
+    }
+    return day;
+  });
+}
+
 async function getWeather(latitude: number, longitude: number, startDate: string, endDate: string) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -324,15 +345,15 @@ export async function POST(request: Request) {
   const lowValue = /\b(war|siege|battle|federation|hospital|ministry|embassy|school|company|district|parish)\b/i;
   const candidates = [...unique.values()].filter((place) => place.name.toLowerCase() !== geo.name.toLowerCase() && !lowValue.test(`${place.name} ${place.description}`));
   const ranked = rankPlaces(candidates, interests, body.prompt || '');
+  const perDay = pace === 'slow' ? 2 : 3;
   const needed = Math.min(18, tripDays * (pace === 'slow' ? 2 : 3));
-  const selected = ranked.slice(0, needed);
+  const dayGroups = clusterIntoDays(ranked.slice(0, Math.min(ranked.length, needed + 8)), tripDays, perDay);
+  const selected = dayGroups.flat();
   if (selected.length < Math.min(4, needed)) {
     return jsonError('We found the city, but not enough sourced places to build a useful plan. Try a nearby major city.', 503);
   }
 
-  const perDay = pace === 'slow' ? 2 : 3;
   const visitMinutes = pace === 'slow' ? 120 : pace === 'full' ? 75 : 90;
-  const dayGroups = Array.from({ length: tripDays }, (_, index) => selected.slice(index * perDay, (index + 1) * perDay));
   const routes = await Promise.all(dayGroups.map(routeDay));
   const itinerary = dayGroups.map((places, dayIndex) => {
     let cursor = 9 * 60 + 30;
@@ -365,6 +386,8 @@ export async function POST(request: Request) {
   const stayEstimate = nights * 125;
   const contingency = Math.round((activityEstimate + foodEstimate + transportEstimate + stayEstimate) * 0.1);
   const total = activityEstimate + foodEstimate + transportEstimate + stayEstimate + contingency;
+  const paceTravelLimit = pace === 'slow' ? 70 : pace === 'balanced' ? 100 : 150;
+  const paceFits = routes.every((route) => route.durationMinutes <= paceTravelLimit);
   const summary = summaryResult.status === 'fulfilled' ? summaryResult.value : undefined;
   const warnings = [
     ...(osmResult.status === 'rejected' ? ['OpenStreetMap place details were unavailable; Wikipedia places are shown.'] : []),
@@ -401,10 +424,10 @@ export async function POST(request: Request) {
       ],
     },
     validation: {
-      dates: 'pass', overlap: 'pass', pace: 'pass',
+      dates: 'pass', overlap: 'pass', pace: paceFits ? 'pass' : 'check',
       openingHours: selected.every((place) => place.openingHours) ? 'pass' : 'check',
       budget: budget > 0 && total > budget ? 'fail' : 'pass',
-      note: 'Schedules do not overlap. Published opening hours still need confirmation before booking.',
+      note: `${paceFits ? 'Schedules do not overlap and travel fits the selected pace.' : 'One day has a longer transfer than your selected pace.'} Published opening hours still need confirmation before booking.`,
     },
     meta: {
       fetchedAt: new Date().toISOString(),
