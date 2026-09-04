@@ -44,7 +44,14 @@ function jsonError(message: string, status = 400) {
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(12000) });
+  const headers = new Headers(init?.headers);
+  if (!headers.has('accept')) headers.set('accept', 'application/json');
+  if (!headers.has('user-agent')) headers.set('user-agent', 'DahliaTripPlanner/0.1 (travel planning proof of concept)');
+  const response = await fetch(url, {
+    ...init,
+    headers,
+    signal: AbortSignal.timeout(12000),
+  });
   if (!response.ok) throw new Error(`Provider returned ${response.status}`);
   return response.json() as Promise<T>;
 }
@@ -79,11 +86,18 @@ function haversineKm(a: Place, b: Place) {
 async function getPlaces(latitude: number, longitude: number) {
   const query = `[out:json][timeout:18];(nwr(around:12000,${latitude},${longitude})[tourism~"attraction|museum|gallery|viewpoint"][name];nwr(around:12000,${latitude},${longitude})[historic][name];nwr(around:8000,${latitude},${longitude})[amenity="marketplace"][name];);out center tags 45;`;
   type OverpassResponse = { elements?: Array<{ id: number; type: string; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }> };
-  const data = await fetchJson<OverpassResponse>('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'DahliaTripPlanner/0.1' },
-    body: new URLSearchParams({ data: query }),
-  });
+  let data: OverpassResponse | undefined;
+  for (const endpoint of ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']) {
+    try {
+      data = await fetchJson<OverpassResponse>(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ data: query }),
+      });
+      break;
+    } catch { /* Try the next public Overpass instance. */ }
+  }
+  if (!data) throw new Error('OpenStreetMap place search unavailable');
 
   return (data.elements || []).flatMap<Place>((element) => {
     const tags = element.tags || {};
@@ -108,24 +122,32 @@ async function getPlaces(latitude: number, longitude: number) {
 }
 
 async function getWikipediaPlaces(latitude: number, longitude: number) {
-  type WikiResponse = { query?: { pages?: Record<string, { pageid: number; title: string; extract?: string; fullurl?: string; thumbnail?: { source: string }; coordinates?: Array<{ lat: number; lon: number }> }> } };
-  const params = new URLSearchParams({
-    action: 'query', generator: 'geosearch', ggsprimary: 'all', ggsnamespace: '0',
-    ggsradius: '10000', ggscoord: `${latitude}|${longitude}`, ggslimit: '30',
-    prop: 'coordinates|pageimages|extracts|info', inprop: 'url', piprop: 'thumbnail', pithumbsize: '900',
+  type GeoSearchResponse = { query?: { geosearch?: Array<{ pageid: number; title: string; lat: number; lon: number }> } };
+  type WikiResponse = { query?: { pages?: Record<string, { pageid: number; title: string; extract?: string; fullurl?: string; thumbnail?: { source: string } }> } };
+  const geoParams = new URLSearchParams({
+    action: 'query', list: 'geosearch', gsprimary: 'all', gsnamespace: '0',
+    gsradius: '10000', gscoord: `${latitude}|${longitude}`, gslimit: '40', format: 'json', origin: '*',
+  });
+  const geoData = await fetchJson<GeoSearchResponse>(`https://en.wikipedia.org/w/api.php?${geoParams}`);
+  const nearby = geoData.query?.geosearch || [];
+  if (!nearby.length) return [];
+  const detailParams = new URLSearchParams({
+    action: 'query', pageids: nearby.map((page) => page.pageid).join('|'),
+    prop: 'pageimages|extracts|info', inprop: 'url', piprop: 'thumbnail', pithumbsize: '900',
     exintro: '1', explaintext: '1', exsentences: '2', format: 'json', origin: '*',
   });
-  const data = await fetchJson<WikiResponse>(`https://en.wikipedia.org/w/api.php?${params}`);
-  return Object.values(data.query?.pages || {}).flatMap<Place>((page) => {
-    const coordinates = page.coordinates?.[0];
-    if (!coordinates || !page.extract) return [];
+  const detailData = await fetchJson<WikiResponse>(`https://en.wikipedia.org/w/api.php?${detailParams}`);
+  const details = detailData.query?.pages || {};
+  return nearby.flatMap<Place>((nearbyPage) => {
+    const page = details[String(nearbyPage.pageid)];
+    if (!page) return [];
     return [{
       id: `wiki-${page.pageid}`,
       name: page.title,
-      latitude: coordinates.lat,
-      longitude: coordinates.lon,
+      latitude: nearbyPage.lat,
+      longitude: nearbyPage.lon,
       category: 'notable place',
-      description: cleanText(page.extract),
+      description: cleanText(page.extract || `Notable place near the centre of the destination.`),
       imageUrl: page.thumbnail?.source,
       sourceUrl: page.fullurl || `https://en.wikipedia.org/?curid=${page.pageid}`,
       source: 'Wikipedia',
