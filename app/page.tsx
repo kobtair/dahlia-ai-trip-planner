@@ -3,7 +3,7 @@
 import { SyntheticEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { ItineraryMap } from '@/components/itinerary-map';
-import { TripConversation, CURRENCIES } from '@/components/trip-conversation';
+import { CURRENCIES } from '@/components/trip-conversation';
 import { PlanningProgress } from '@/components/planning-progress';
 import { PlacePhoto } from '@/components/place-photo';
 import {
@@ -95,7 +95,6 @@ function StatusDot({ status }: { status: string }) {
 
 export default function Home() {
   const [form, setForm] = useState<TripForm>(DEFAULT_FORM);
-  const [briefConfirmed, setBriefConfirmed] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState<string | null>(null);
   const [plan, setPlan] = useState<TripPlan | null>(null);
   const [loading, setLoading] = useState(false);
@@ -160,7 +159,7 @@ export default function Home() {
         try {
           const parsed = JSON.parse(stored) as { form?: TripForm; plan?: TripPlan; revisions?: string[] };
           if (parsed.form) setForm(parsed.form);
-          if (parsed.plan) { setPlan(parsed.plan); setBriefConfirmed(true); }
+          if (parsed.plan) setPlan(parsed.plan);
           if (parsed.revisions) setRevisions(parsed.revisions);
         } catch { localStorage.removeItem('dahlia-last-trip'); }
       }
@@ -267,7 +266,7 @@ export default function Home() {
 
   function resetTrip() {
     const next = { ...DEFAULT_FORM, startDate: isoDate(7), endDate: isoDate(10) };
-    setForm(next); setPlan(null); setBriefConfirmed(false); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
+    setForm(next); setPlan(null); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
     window.history.replaceState({}, '', window.location.pathname);
   }
 
@@ -288,10 +287,7 @@ export default function Home() {
         </div>
       </header>
 
-      {!briefConfirmed && !readOnly && !plan ? <TripConversation onConfirm={(answers) => {
-        const next = { ...DEFAULT_FORM, ...answers, travelers: Number(answers.travelers), budget: Number(answers.budget) || 0, pace: answers.pace as TripForm['pace'], interests: [] };
-        setForm(next); setBriefConfirmed(true); void buildTrip(next);
-      }} /> : <section className="mx-auto grid max-w-[1540px] gap-5 px-5 pb-8 sm:px-8 lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)]">
+      <section className="mx-auto grid max-w-[1540px] gap-5 px-5 pb-8 sm:px-8 lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)]">
         <aside className="planner-panel relative overflow-hidden rounded-[2rem] bg-[#173c35] text-white lg:sticky lg:top-4 lg:h-[calc(100vh-32px)]">
           <div className="pointer-events-none absolute inset-0 opacity-35 [background:radial-gradient(circle_at_90%_0%,#8ce2ad,transparent_27%),radial-gradient(circle_at_5%_100%,#507d69,transparent_34%)]" />
           <div className="relative flex h-full flex-col overflow-y-auto p-5 sm:p-7">
@@ -456,7 +452,7 @@ export default function Home() {
             </div>
           )}
         </section>
-      </section>}
+      </section>
     </main>
   );
 }
