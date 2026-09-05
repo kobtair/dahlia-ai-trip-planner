@@ -267,12 +267,12 @@ export default function Home() {
   const featured = plan?.itinerary.flatMap((day) => day.items).find((item) => item.imageUrl);
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="dahlia-studio min-h-screen bg-background text-foreground">
       <header className="mx-auto flex h-20 max-w-[1540px] items-center justify-between px-5 sm:px-8">
         <button onClick={resetTrip} className="flex items-center gap-2.5" aria-label="Start a new Dahlia trip">
           <span className="grid size-9 place-items-center rounded-full bg-primary text-primary-foreground"><Compass className="size-[18px]" /></span>
           <span className="font-heading text-xl font-semibold tracking-[-0.04em]">dahlia</span>
-          <span className="hidden rounded-full bg-[#173c35]/8 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#173c35]/60 sm:inline">POC</span>
+          <span className="brand-caption hidden sm:inline">A little further from ordinary.</span>
         </button>
         <div className="flex items-center gap-2">
           {readOnly && <span className="mr-2 hidden text-xs text-muted-foreground sm:inline">Read-only shared trip</span>}
@@ -282,12 +282,13 @@ export default function Home() {
       </header>
 
       <section className="mx-auto grid max-w-[1540px] gap-5 px-5 pb-8 sm:px-8 lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)]">
-        <aside className="relative overflow-hidden rounded-[2rem] bg-[#173c35] text-white lg:sticky lg:top-4 lg:h-[calc(100vh-32px)]">
+        <aside className="planner-panel relative overflow-hidden rounded-[2rem] bg-[#173c35] text-white lg:sticky lg:top-4 lg:h-[calc(100vh-32px)]">
           <div className="pointer-events-none absolute inset-0 opacity-35 [background:radial-gradient(circle_at_90%_0%,#8ce2ad,transparent_27%),radial-gradient(circle_at_5%_100%,#507d69,transparent_34%)]" />
           <div className="relative flex h-full flex-col overflow-y-auto p-5 sm:p-7">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/8 px-3 py-1.5 text-xs font-medium text-white/75"><Sparkles className="size-3.5" /> Sourced planning, honest estimates</span>
-              <h1 className="mt-6 max-w-sm font-heading text-4xl font-medium leading-[0.96] tracking-[-0.055em] sm:text-5xl">Where should we wander next?</h1>
+              <span className="planner-eyebrow"><Sparkles className="size-3.5" /> YOUR NEXT CHAPTER</span>
+              <h1 className="mt-6 max-w-sm font-heading text-4xl font-medium leading-[0.96] tracking-[-0.055em] sm:text-5xl">Somewhere<br /><em>worth going.</em></h1>
+              <p className="planner-intro">A few details. A little daydreaming. A trip that feels like you.</p>
             </div>
 
             <form onSubmit={submit} className="mt-7 space-y-4">
@@ -298,8 +299,8 @@ export default function Home() {
 
               <div className="rounded-[1.5rem] border border-white/12 bg-white/7 p-4 backdrop-blur-sm">
                 <div className="mb-3 flex items-center justify-between">
-                  <p className="text-xs font-bold uppercase tracking-[0.13em] text-white/55">Trip checklist</p>
-                  <span className="flex items-center gap-1.5 text-xs text-[#a9e9bc]"><Check className="size-3.5" /> 5 of 5</span>
+                  <p className="text-xs font-bold uppercase tracking-[0.13em] text-white/55">The essentials</p>
+                  <span className="text-xs text-muted-foreground">01 / 02</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="field-shell" htmlFor="origin"><span>From</span><Input id="origin" value={form.origin} onChange={(event) => setForm({ ...form, origin: event.target.value })} disabled={readOnly} aria-label="Origin" /></label>
@@ -339,17 +340,14 @@ export default function Home() {
           </div>
         </aside>
 
-        <section className="min-w-0 overflow-hidden rounded-[2rem] border border-border bg-card">
+        <section className="trip-canvas min-w-0 overflow-hidden rounded-[2rem] border border-border bg-card">
           {!plan ? (
             <div className="flex min-h-[calc(100vh-112px)] flex-col">
-              <div className="relative min-h-[330px] overflow-hidden bg-[#d9e1d7] p-7 sm:p-10">
-                <div className="absolute inset-0 opacity-80 [background:linear-gradient(115deg,rgba(244,239,222,.9),rgba(244,239,222,.1)),repeating-radial-gradient(circle_at_77%_58%,transparent_0_24px,rgba(39,78,66,.14)_25px_26px)]" />
-                <div className="absolute bottom-[22%] right-[24%] size-3 rounded-full bg-[#f36943] shadow-[0_0_0_9px_rgba(243,105,67,.16)]" />
-                <div className="relative max-w-lg">
-                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.15em] text-[#345b4e]"><Map className="size-4" /> Your trip canvas</div>
-                  <p className="mt-24 text-sm text-[#345b4e]">Ready when you are</p>
-                  <h2 className="mt-2 font-heading text-4xl font-medium leading-none tracking-[-0.05em] text-[#173c35] sm:text-6xl">A real plan,<br />not a wish list.</h2>
-                </div>
+              <div className="travel-cover">
+                <div className="cover-kicker"><span>THE ART OF GETTING AWAY</span><Compass size={20} /></div>
+                <div className="cover-art" aria-hidden="true"><div className="cover-sun" /><div className="cover-arch" /><div className="cover-horizon" /><span>38°43′ N · 9°08′ W</span></div>
+                <div className="cover-copy"><p>Less planning. More possibility.</p><h2>Leave room<br />for <em>wonder.</em></h2><p className="cover-description">Slow mornings, unexpected corners, and days<br className="hidden sm:block" /> that fall beautifully into place.</p></div>
+                <div className="cover-footer"><span><Map size={14} /> YOUR JOURNEY STARTS HERE</span><span>Made for your kind of travel ↗</span></div>
               </div>
               <div className="grid flex-1 gap-4 p-6 sm:grid-cols-3 sm:p-8">
                 {[['01', 'Real places', 'Named, mapped places from OpenStreetMap and Wikipedia.'], ['02', 'Feasible days', 'Non-overlapping times, walking routes and a pace check.'], ['03', 'Facts with labels', 'Forecasts are live. Budgets stay clearly estimated.']].map(([number, title, copy]) => (
