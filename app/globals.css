@@ -219,7 +219,8 @@ body {
 .trip-canvas > div > .grid > div + div { border-left: 1px solid #e5e0d7; }
 .trip-canvas > div > .grid h3 { margin-top: 22px; font-size: 14px; }
 .trip-canvas > div > .grid p { font-size: 12px; line-height: 1.8; }
-.dahlia-studio :focus-visible { outline: 2px solid #ab482f; outline-offset: 4px; }
+.dahlia-studio :focus,
+.dahlia-studio :focus-visible { outline: none !important; box-shadow: none !important; }
 .dahlia-studio .conversation-field:focus,
 .dahlia-studio .conversation-field:focus-visible { outline: none !important; outline-offset: 0; box-shadow: none; }
 .dahlia-studio .conversation-field::selection { background: #ead0c4; color: #292c30; }
