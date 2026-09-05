@@ -26,12 +26,16 @@ export function TripConversation({ onConfirm }: { onConfirm: (answers: Record<st
     {done ? <div className="mt-6 flex gap-3"><button className="rounded-lg bg-primary px-5 py-3 text-primary-foreground" onClick={() => onConfirm(answers)}>Confirm trip details →</button><button onClick={() => { setStep(step - 1); setValue(answers.pace); }}>Go back</button></div> : <form className="mt-6" onSubmit={(event) => {
       event.preventDefault();
       const key = question?.[0] || 'prompt';
-      setAnswers({ ...answers, [key]: value.trim() });
-      setStep(step + 1);
-      setValue(questions[step + 1]?.[2] === 'currency' ? 'USD' : questions[step + 1]?.[2] === 'pace' ? 'balanced' : '');
+      const nextAnswers = { ...answers, [key]: value.trim() };
+      const match = step === -1 ? value.trim().match(/\b(?:go|travel|fly|head)\s+(?:to|for)\s+([A-Za-z][A-Za-z\s'-]*?)(?=\s+(?:from|on|in|for)\b|[,!.]|$)/i) : null;
+      if (match?.[1]) nextAnswers.destination = match[1].trim();
+      setAnswers(nextAnswers);
+      const nextStep = step === -1 ? (match?.[1] ? 1 : 0) : step + 1;
+      setStep(nextStep);
+      setValue(questions[nextStep]?.[2] === 'currency' ? 'USD' : questions[nextStep]?.[2] === 'pace' ? 'balanced' : '');
     }}>
       <div className="flex gap-2 rounded-xl border bg-white p-3">
-        {question?.[2] === 'currency' || question?.[2] === 'pace' ? <select aria-label={question[1]} className="min-w-0 flex-1 bg-transparent p-2" value={value} onChange={(event) => setValue(event.target.value)}>{(question[2] === 'currency' ? CURRENCIES : ['slow', 'balanced', 'full']).map((option) => <option key={option}>{option}</option>)}</select> : <input key={step} aria-label={question?.[1] || 'Describe your trip'} className="min-w-0 flex-1 p-2 outline-none" type={question?.[2] || 'text'} placeholder={step < 0 ? 'A week in Italy, good food and time to wander…' : 'Your answer…'} value={value} onChange={(event) => setValue(event.target.value)} required={question?.[0] !== 'budget'} min={question?.[0] === 'endDate' ? answers.startDate : question?.[0] === 'travelers' ? 1 : 0} max={question?.[0] === 'travelers' ? 12 : undefined} />}
+        {question?.[2] === 'currency' || question?.[2] === 'pace' ? <select aria-label={question[1]} className="conversation-field min-w-0 flex-1 bg-transparent p-2" value={value} onChange={(event) => setValue(event.target.value)}>{(question[2] === 'currency' ? CURRENCIES : ['slow', 'balanced', 'full']).map((option) => <option key={option}>{option}</option>)}</select> : <input key={step} aria-label={question?.[1] || 'Describe your trip'} className="conversation-field min-w-0 flex-1 p-2 outline-none" type={question?.[2] || 'text'} placeholder={step < 0 ? 'A week in Italy, good food and time to wander…' : 'Your answer…'} value={value} onChange={(event) => setValue(event.target.value)} required={question?.[0] !== 'budget'} min={question?.[0] === 'endDate' ? answers.startDate : question?.[0] === 'travelers' ? 1 : 0} max={question?.[0] === 'travelers' ? 12 : undefined} />}
         <button className="rounded-lg bg-primary px-4 py-2 text-primary-foreground" type="submit">Send →</button>
       </div>
       {step >= 0 && <button type="button" className="mt-3 text-xs text-muted-foreground" onClick={() => { setStep(step - 1); setValue(answers[questions[step - 1]?.[0] || 'prompt'] || ''); }}>Go back</button>}
