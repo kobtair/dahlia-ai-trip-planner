@@ -4,6 +4,8 @@ import { SyntheticEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { ItineraryMap } from '@/components/itinerary-map';
 import { TripConversation, CURRENCIES } from '@/components/trip-conversation';
+import { PlanningProgress } from '@/components/planning-progress';
+import { PlacePhoto } from '@/components/place-photo';
 import {
   ArrowRight, CalendarDays, Check, ChevronDown, CircleAlert, CloudSun, Compass, DollarSign,
   ExternalLink, Footprints, History, Link2, LoaderCircle, Map, MapPin, RotateCcw, Sparkles,
@@ -354,7 +356,7 @@ export default function Home() {
         </aside>
 
         <section className="trip-canvas min-w-0 overflow-hidden rounded-[2rem] border border-border bg-card">
-          {!plan ? (
+          {loading ? <PlanningProgress destination={form.destination} /> : !plan ? (
             <div className="flex min-h-[calc(100vh-112px)] flex-col">
               <div className="travel-cover">
                 <div className="cover-kicker"><span>THE ART OF GETTING AWAY</span><Compass size={20} /></div>
@@ -417,7 +419,7 @@ export default function Home() {
                               <div key={item.id} className="group relative grid gap-3 rounded-2xl border border-border bg-white p-4 transition hover:border-[#173c35]/25 hover:shadow-[0_12px_36px_rgba(23,60,53,.07)] sm:grid-cols-[74px_minmax(0,1fr)_auto]">
                                 <span className="absolute -left-[29px] top-6 size-2 rounded-full bg-[#f36943] ring-4 ring-[#f9f7f0] sm:-left-[33px]" />
                                 <div className="font-mono text-xs text-[#365b4f]"><p>{item.startTime}</p><p className="mt-1 text-muted-foreground">{item.endTime}</p>{item.travelMinutesFromPrevious > 0 && <p className="mt-2 text-[10px] text-muted-foreground">+{item.travelMinutesFromPrevious} min</p>}</div>
-                                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{item.name}</h4><span className="rounded-full bg-[#f3efe5] px-2 py-0.5 text-[10px] text-[#365b4f]">{item.category.replaceAll('_', ' ')}</span></div><p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{item.description}</p><p className="mt-2 text-xs text-[#365b4f]"><Sparkles className="mr-1 inline size-3" />{item.why}</p></div>
+<div className="min-w-0"><PlacePhoto key={item.imageUrl || item.id} src={item.imageUrl} name={item.name} /><div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">{item.name}</h4><span className="rounded-full bg-[#f3efe5] px-2 py-0.5 text-[10px] text-[#365b4f]">{item.category.replaceAll('_', ' ')}</span></div><p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{item.description}</p><p className="mt-2 text-xs text-[#365b4f]"><Sparkles className="mr-1 inline size-3" />{item.why}</p></div>
                                 <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 self-start text-xs font-medium text-[#d85d3e]">{item.source}<ExternalLink className="size-3" /></a>
                               </div>
                             ))}
