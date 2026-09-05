@@ -2,6 +2,7 @@
 
 import { SyntheticEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
+import { ItineraryMap } from '@/components/itinerary-map';
 import {
   ArrowRight, CalendarDays, Check, ChevronDown, CircleAlert, CloudSun, Compass, DollarSign,
   ExternalLink, Footprints, History, Link2, LoaderCircle, Map, MapPin, RotateCcw, Sparkles,
@@ -25,6 +26,7 @@ type TripForm = {
 };
 
 type PlaceItem = {
+  latitude?: number; longitude?: number;
   id: string; name: string; category: string; description: string; imageUrl?: string; website?: string;
   openingHours?: string; sourceUrl: string; source: string; startTime: string; endTime: string;
   travelMinutesFromPrevious: number; why: string; freshness: { status: string; provider: string; fetchedAt: string };
@@ -34,7 +36,7 @@ type TripPlan = {
   tripId: string;
   spec: TripForm & { days: number };
   destination: { name: string; country?: string; latitude: number; longitude: number; timezone?: string; summary?: string; imageUrl?: string; sourceUrl?: string };
-  itinerary: Array<{ day: number; date: string; title: string; items: PlaceItem[]; route: { distanceKm: number; durationMinutes: number; source: string; status: string } }>;
+  itinerary: Array<{ day: number; date: string; title: string; items: PlaceItem[]; route: { distanceKm: number; durationMinutes: number; source: string; status: string; geometry?: { coordinates: [number, number][] } } }>;
   weather: { available: boolean; status: string; note?: string; timezone?: string; daily?: Array<{ date: string; high: number; low: number; precipitation: number; description: string }> };
   budget: { currency: string; budget: number; total: number; status: string; lines: Array<{ label: string; amount: number; status: string }> };
   validation: { dates: string; overlap: string; pace: string; openingHours: string; budget: string; note: string };
@@ -224,7 +226,7 @@ export default function Home() {
     }
     const nextPlan = structuredClone(plan);
     if (instruction === 'slower') {
-      nextPlan.itinerary = nextPlan.itinerary.map((day) => ({ ...day, items: day.items.slice(0, 2) }));
+      nextPlan.itinerary = nextPlan.itinerary.map((day) => ({ ...day, items: day.items.slice(0, 2), route: { ...day.route, geometry: undefined } }));
       nextPlan.spec.pace = 'slow';
       nextPlan.validation.pace = 'pass';
       setForm((current) => ({ ...current, pace: 'slow' }));
@@ -263,7 +265,6 @@ export default function Home() {
     window.history.replaceState({}, '', window.location.pathname);
   }
 
-  const mapUrl = plan ? `https://www.openstreetmap.org/export/embed.html?bbox=${plan.destination.longitude - 0.08}%2C${plan.destination.latitude - 0.05}%2C${plan.destination.longitude + 0.08}%2C${plan.destination.latitude + 0.05}&layer=mapnik&marker=${plan.destination.latitude}%2C${plan.destination.longitude}` : '';
   const featured = plan?.itinerary.flatMap((day) => day.items).find((item) => item.imageUrl);
 
   return (
@@ -432,7 +433,7 @@ export default function Home() {
                   {revisions.length > 0 && <details className="mt-4 rounded-2xl border border-border p-4"><summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium"><History className="size-4" /> Revision history <ChevronDown className="ml-auto size-4" /></summary><ul className="mt-3 space-y-2 text-xs text-muted-foreground">{revisions.map((revision, index) => <li key={`${revision}-${index}`} className="border-l border-[#f36943]/35 pl-3">{revision}</li>)}</ul></details>}
                 </TabsContent>
 
-                <TabsContent value="map" className="pt-6"><div className="overflow-hidden rounded-2xl border border-border"><iframe title={`Map of ${plan.destination.name}`} src={mapUrl} className="h-[560px] w-full border-0" loading="lazy" /></div><p className="mt-2 text-[11px] text-muted-foreground">Map data © OpenStreetMap contributors. Open itinerary source links to verify individual places.</p></TabsContent>
+                <TabsContent value="map" className="pt-6"><ItineraryMap itinerary={plan.itinerary} destination={plan.destination} /></TabsContent>
 
                 <TabsContent value="budget" className="pt-6"><div className="mx-auto max-w-2xl"><div className="flex items-end justify-between"><div><p className="text-xs text-muted-foreground">Deterministic trip estimate</p><h3 className="mt-1 font-heading text-4xl font-medium tracking-tight">${plan.budget.total.toLocaleString()}</h3></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${plan.budget.status === 'over' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}><StatusDot status={plan.budget.status} /> <span className="ml-1">{plan.budget.status === 'over' ? `$${plan.budget.total - plan.budget.budget} over budget` : 'Within your budget'}</span></span></div><div className="mt-7 divide-y divide-border rounded-2xl border border-border">{plan.budget.lines.map((line) => <div key={line.label} className="flex items-center justify-between p-4 text-sm"><div><p className="font-medium">{line.label}</p><p className="mt-1 text-[11px] text-muted-foreground">Estimated · not a live quote</p></div><strong>${line.amount.toLocaleString()}</strong></div>)}</div><p className="mt-4 text-xs leading-5 text-muted-foreground">Dahlia never styles an estimate like a live fare. Hotel, flight, and activity checkout stay out of this POC until commercial inventory partners are connected.</p></div></TabsContent>
 

@@ -275,8 +275,8 @@ async function routeDay(places: Place[]) {
   if (places.length < 2) return { distanceKm: 0, durationMinutes: 0, source: 'Coordinates', status: 'estimated' };
   const coordinates = places.map((place) => `${place.longitude},${place.latitude}`).join(';');
   try {
-    type RouteResponse = { routes?: Array<{ distance: number; duration: number; legs: Array<{ distance: number; duration: number }> }> };
-    const result = await fetchJson<RouteResponse>(`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coordinates}?overview=false&steps=false`);
+    type RouteResponse = { routes?: Array<{ geometry: { coordinates: [number, number][] }; distance: number; duration: number; legs: Array<{ distance: number; duration: number }> }> };
+    const result = await fetchJson<RouteResponse>(`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false`);
     const route = result.routes?.[0];
     if (!route) throw new Error('No route');
     return {
@@ -285,6 +285,7 @@ async function routeDay(places: Place[]) {
       legs: route.legs.map((leg) => Math.max(1, Math.round(leg.duration / 60))),
       source: 'OSRM foot route',
       status: 'live',
+      geometry: route.geometry,
     };
   } catch {
     const distanceKm = places.slice(1).reduce((total, place, index) => total + haversineKm(places[index], place), 0);
