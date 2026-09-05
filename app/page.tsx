@@ -91,6 +91,7 @@ function StatusDot({ status }: { status: string }) {
 
 export default function Home() {
   const [form, setForm] = useState<TripForm>(DEFAULT_FORM);
+  const [budgetDraft, setBudgetDraft] = useState<string | null>(null);
   const [plan, setPlan] = useState<TripPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -309,7 +310,12 @@ export default function Home() {
                   <label className="field-shell" htmlFor="start-date"><span>Start</span><Input id="start-date" type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} disabled={readOnly} required aria-label="Start date" /></label>
                   <label className="field-shell" htmlFor="end-date"><span>End</span><Input id="end-date" type="date" value={form.endDate} min={form.startDate} onChange={(event) => setForm({ ...form, endDate: event.target.value })} disabled={readOnly} required aria-label="End date" /></label>
                   <label className="field-shell" htmlFor="travelers"><span>Travelers</span><Input id="travelers" type="number" min={1} max={12} value={form.travelers} onChange={(event) => setForm({ ...form, travelers: Number(event.target.value) })} disabled={readOnly} aria-label="Travelers" /></label>
-                  <label className="field-shell" htmlFor="budget"><span>Budget · USD</span><Input id="budget" type="number" min={0} step={50} value={form.budget} onChange={(event) => setForm({ ...form, budget: Number(event.target.value) })} disabled={readOnly} aria-label="Budget in US dollars" /></label>
+                  <label className="field-shell" htmlFor="budget"><span>Budget · USD</span><Input id="budget" type="text" inputMode="decimal" placeholder="No limit" value={budgetDraft ?? (form.budget ? form.budget.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '')} onFocus={(event) => { setBudgetDraft(form.budget ? String(form.budget) : ''); event.currentTarget.select(); }} onChange={(event) => {
+                    const value = event.target.value.replace(/[$,\s]/g, '');
+                    if (!/^\d*(\.\d{0,2})?$/.test(value)) return;
+                    setBudgetDraft(value);
+                    setForm((current) => ({ ...current, budget: Number(value) || 0 }));
+                  }} onBlur={() => setBudgetDraft(null)} disabled={readOnly} aria-label="Budget in US dollars" /></label>
                 </div>
                 <div className="mt-2 grid grid-cols-[1fr_0.9fr] gap-2">
                   <div className="field-shell">
