@@ -5,6 +5,7 @@ type PlanRequest = {
   endDate?: string;
   travelers?: number;
   budget?: number;
+  currency?: string;
   pace?: 'slow' | 'balanced' | 'full';
   interests?: string[];
   prompt?: string;
@@ -308,6 +309,16 @@ export async function POST(request: Request) {
   const endDate = body.endDate;
   const travelers = Math.max(1, Math.min(12, Number(body.travelers || 1)));
   const budget = Math.max(0, Number(body.budget || 0));
+  const currency = body.currency || 'USD';
+  if (!['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR'].includes(currency)) return jsonError('Choose a supported currency.');
+  let exchangeRate = 1;
+  if (currency !== 'USD') {
+    try {
+      const exchange = await fetchJson<{ rates: Record<string, number> }>(`https://api.frankfurter.app/latest?from=USD&to=${currency}`);
+      exchangeRate = exchange.rates[currency];
+      if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) throw new Error('Invalid rate');
+    } catch { return jsonError('Currency conversion is temporarily unavailable. Please retry or choose USD.', 503); }
+  }
   const pace = body.pace || 'balanced';
   const interests = (body.interests || []).slice(0, 8);
 
@@ -381,10 +392,10 @@ export async function POST(request: Request) {
   });
 
   const nights = Math.max(0, tripDays - 1);
-  const activityEstimate = selected.length * 18 * travelers;
-  const foodEstimate = tripDays * 46 * travelers;
-  const transportEstimate = tripDays * 13 * travelers;
-  const stayEstimate = nights * 125;
+  const activityEstimate = Math.round(selected.length * 18 * travelers * exchangeRate);
+  const foodEstimate = Math.round(tripDays * 46 * travelers * exchangeRate);
+  const transportEstimate = Math.round(tripDays * 13 * travelers * exchangeRate);
+  const stayEstimate = Math.round(nights * 125 * exchangeRate);
   const contingency = Math.round((activityEstimate + foodEstimate + transportEstimate + stayEstimate) * 0.1);
   const total = activityEstimate + foodEstimate + transportEstimate + stayEstimate + contingency;
   const paceTravelLimit = pace === 'slow' ? 70 : pace === 'balanced' ? 100 : 150;
@@ -414,7 +425,7 @@ export async function POST(request: Request) {
     itinerary,
     weather: weatherResult.status === 'fulfilled' ? weatherResult.value : { available: false, status: 'unavailable', note: 'Weather is temporarily unavailable.' },
     budget: {
-      currency: 'USD', budget, total,
+      currency, budget, total,
       status: budget > 0 && total > budget ? 'over' : 'on-track',
       lines: [
         { label: 'Stay allowance', amount: stayEstimate, status: 'estimated' },

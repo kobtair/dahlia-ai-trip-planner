@@ -3,6 +3,7 @@
 import { SyntheticEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { ItineraryMap } from '@/components/itinerary-map';
+import { TripConversation, CURRENCIES } from '@/components/trip-conversation';
 import {
   ArrowRight, CalendarDays, Check, ChevronDown, CircleAlert, CloudSun, Compass, DollarSign,
   ExternalLink, Footprints, History, Link2, LoaderCircle, Map, MapPin, RotateCcw, Sparkles,
@@ -21,6 +22,7 @@ type TripForm = {
   endDate: string;
   travelers: number;
   budget: number;
+  currency?: string;
   pace: 'slow' | 'balanced' | 'full';
   interests: string[];
 };
@@ -91,6 +93,7 @@ function StatusDot({ status }: { status: string }) {
 
 export default function Home() {
   const [form, setForm] = useState<TripForm>(DEFAULT_FORM);
+  const [briefConfirmed, setBriefConfirmed] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState<string | null>(null);
   const [plan, setPlan] = useState<TripPlan | null>(null);
   const [loading, setLoading] = useState(false);
@@ -133,7 +136,7 @@ export default function Home() {
           startDate: params.get('start') || DEFAULT_FORM.startDate,
           endDate: params.get('end') || DEFAULT_FORM.endDate,
           travelers: Number(params.get('travelers') || 1),
-          budget: Number(params.get('budget') || 0),
+          budget: Number(params.get('budget') || 0), currency: params.get('currency') || 'USD',
           pace: (params.get('pace') as TripForm['pace']) || 'balanced',
           interests: (params.get('interests') || 'food,history').split(',').filter(Boolean),
           prompt: params.get('prompt') || 'Shared Dahlia trip',
@@ -155,7 +158,7 @@ export default function Home() {
         try {
           const parsed = JSON.parse(stored) as { form?: TripForm; plan?: TripPlan; revisions?: string[] };
           if (parsed.form) setForm(parsed.form);
-          if (parsed.plan) setPlan(parsed.plan);
+          if (parsed.plan) { setPlan(parsed.plan); setBriefConfirmed(true); }
           if (parsed.revisions) setRevisions(parsed.revisions);
         } catch { localStorage.removeItem('dahlia-last-trip'); }
       }
@@ -252,7 +255,7 @@ export default function Home() {
   async function shareTrip() {
     const params = new URLSearchParams({
       share: '1', destination: form.destination, origin: form.origin, start: form.startDate, end: form.endDate,
-      travelers: String(form.travelers), budget: String(form.budget), pace: form.pace,
+      travelers: String(form.travelers), budget: String(form.budget), currency: form.currency || 'USD', pace: form.pace,
       interests: form.interests.join(','), prompt: form.prompt,
     });
     const url = `${window.location.origin}${window.location.pathname}?${params}`;
@@ -262,7 +265,7 @@ export default function Home() {
 
   function resetTrip() {
     const next = { ...DEFAULT_FORM, startDate: isoDate(7), endDate: isoDate(10) };
-    setForm(next); setPlan(null); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
+    setForm(next); setPlan(null); setBriefConfirmed(false); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
     window.history.replaceState({}, '', window.location.pathname);
   }
 
@@ -283,7 +286,10 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-[1540px] gap-5 px-5 pb-8 sm:px-8 lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)]">
+      {!briefConfirmed && !readOnly && !plan ? <TripConversation onConfirm={(answers) => {
+        const next = { ...DEFAULT_FORM, ...answers, travelers: Number(answers.travelers), budget: Number(answers.budget) || 0, pace: answers.pace as TripForm['pace'], interests: [] };
+        setForm(next); setBriefConfirmed(true); void buildTrip(next);
+      }} /> : <section className="mx-auto grid max-w-[1540px] gap-5 px-5 pb-8 sm:px-8 lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)]">
         <aside className="planner-panel relative overflow-hidden rounded-[2rem] bg-[#173c35] text-white lg:sticky lg:top-4 lg:h-[calc(100vh-32px)]">
           <div className="pointer-events-none absolute inset-0 opacity-35 [background:radial-gradient(circle_at_90%_0%,#8ce2ad,transparent_27%),radial-gradient(circle_at_5%_100%,#507d69,transparent_34%)]" />
           <div className="relative flex h-full flex-col overflow-y-auto p-5 sm:p-7">
@@ -310,12 +316,12 @@ export default function Home() {
                   <label className="field-shell" htmlFor="start-date"><span>Start</span><Input id="start-date" type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} disabled={readOnly} required aria-label="Start date" /></label>
                   <label className="field-shell" htmlFor="end-date"><span>End</span><Input id="end-date" type="date" value={form.endDate} min={form.startDate} onChange={(event) => setForm({ ...form, endDate: event.target.value })} disabled={readOnly} required aria-label="End date" /></label>
                   <label className="field-shell" htmlFor="travelers"><span>Travelers</span><Input id="travelers" type="number" min={1} max={12} value={form.travelers} onChange={(event) => setForm({ ...form, travelers: Number(event.target.value) })} disabled={readOnly} aria-label="Travelers" /></label>
-                  <label className="field-shell" htmlFor="budget"><span>Budget · USD</span><Input id="budget" type="text" inputMode="decimal" placeholder="No limit" value={budgetDraft ?? (form.budget ? form.budget.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '')} onFocus={(event) => { setBudgetDraft(form.budget ? String(form.budget) : ''); event.currentTarget.select(); }} onChange={(event) => {
+                  <label className="field-shell" htmlFor="budget"><span>Budget · {form.currency || 'USD'}</span><Input id="budget" type="text" inputMode="decimal" placeholder="No limit" value={budgetDraft ?? (form.budget ? form.budget.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '')} onFocus={(event) => { setBudgetDraft(form.budget ? String(form.budget) : ''); event.currentTarget.select(); }} onChange={(event) => {
                     const value = event.target.value.replace(/[$,\s]/g, '');
                     if (!/^\d*(\.\d{0,2})?$/.test(value)) return;
                     setBudgetDraft(value);
                     setForm((current) => ({ ...current, budget: Number(value) || 0 }));
-                  }} onBlur={() => setBudgetDraft(null)} disabled={readOnly} aria-label="Budget in US dollars" /></label>
+                  }} onBlur={() => setBudgetDraft(null)} disabled={readOnly} aria-label={`Budget in ${form.currency || 'USD'}`} /></label>
                 </div>
                 <div className="mt-2 grid grid-cols-[1fr_0.9fr] gap-2">
                   <div className="field-shell">
@@ -325,7 +331,7 @@ export default function Home() {
                       <SelectContent><SelectItem value="slow">Slow</SelectItem><SelectItem value="balanced">Balanced</SelectItem><SelectItem value="full">Full days</SelectItem></SelectContent>
                     </Select>
                   </div>
-                  <div className="field-shell"><span>Planner</span><strong className="mt-1 block text-xs font-medium text-white/90">Real data</strong></div>
+                  <label className="field-shell"><span>Currency</span><select aria-label="Budget currency" value={form.currency || 'USD'} disabled={readOnly} onChange={(event) => setForm({ ...form, currency: event.target.value })} className="mt-1 w-full bg-transparent text-sm">{CURRENCIES.map((currency) => <option key={currency}>{currency}</option>)}</select></label>
                 </div>
               </div>
 
@@ -441,14 +447,14 @@ export default function Home() {
 
                 <TabsContent value="map" className="pt-6"><ItineraryMap itinerary={plan.itinerary} destination={plan.destination} /></TabsContent>
 
-                <TabsContent value="budget" className="pt-6"><div className="mx-auto max-w-2xl"><div className="flex items-end justify-between"><div><p className="text-xs text-muted-foreground">Deterministic trip estimate</p><h3 className="mt-1 font-heading text-4xl font-medium tracking-tight">${plan.budget.total.toLocaleString()}</h3></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${plan.budget.status === 'over' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}><StatusDot status={plan.budget.status} /> <span className="ml-1">{plan.budget.status === 'over' ? `$${plan.budget.total - plan.budget.budget} over budget` : 'Within your budget'}</span></span></div><div className="mt-7 divide-y divide-border rounded-2xl border border-border">{plan.budget.lines.map((line) => <div key={line.label} className="flex items-center justify-between p-4 text-sm"><div><p className="font-medium">{line.label}</p><p className="mt-1 text-[11px] text-muted-foreground">Estimated · not a live quote</p></div><strong>${line.amount.toLocaleString()}</strong></div>)}</div><p className="mt-4 text-xs leading-5 text-muted-foreground">Dahlia never styles an estimate like a live fare. Hotel, flight, and activity checkout stay out of this POC until commercial inventory partners are connected.</p></div></TabsContent>
+                <TabsContent value="budget" className="pt-6"><div className="mx-auto max-w-2xl"><div className="flex items-end justify-between"><div><p className="text-xs text-muted-foreground">Deterministic trip estimate</p><h3 className="mt-1 font-heading text-4xl font-medium tracking-tight">{plan.budget.currency} {plan.budget.total.toLocaleString()}</h3></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${plan.budget.status === 'over' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}><StatusDot status={plan.budget.status} /> <span className="ml-1">{plan.budget.status === 'over' ? `${plan.budget.currency} ${plan.budget.total - plan.budget.budget} over budget` : 'Within your budget'}</span></span></div><div className="mt-7 divide-y divide-border rounded-2xl border border-border">{plan.budget.lines.map((line) => <div key={line.label} className="flex items-center justify-between p-4 text-sm"><div><p className="font-medium">{line.label}</p><p className="mt-1 text-[11px] text-muted-foreground">Estimated · not a live quote</p></div><strong>{plan.budget.currency} {line.amount.toLocaleString()}</strong></div>)}</div><p className="mt-4 text-xs leading-5 text-muted-foreground">Dahlia never styles an estimate like a live fare. Hotel, flight, and activity checkout stay out of this POC until commercial inventory partners are connected.</p></div></TabsContent>
 
                 <TabsContent value="sources" className="pt-6"><div className="grid gap-3 sm:grid-cols-2">{plan.meta.providers.map((provider) => <div key={provider} className="rounded-2xl border border-border p-4"><div className="flex items-center gap-2 text-sm font-semibold"><StatusDot status={provider.includes('forecast') || provider.includes('OSRM') ? 'live' : 'recent'} />{provider}</div><p className="mt-2 text-xs text-muted-foreground">Checked {new Date(plan.meta.fetchedAt).toLocaleString()}</p></div>)}</div>{plan.meta.warnings.length > 0 && <div className="mt-5 rounded-2xl bg-amber-50 p-4 text-xs leading-5 text-amber-900">{plan.meta.warnings.join(' ')}</div>}{plan.destination.sourceUrl && <a href={plan.destination.sourceUrl} target="_blank" rel="noreferrer" className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-[#d85d3e]">Destination background on Wikipedia <ExternalLink className="size-3.5" /></a>}</TabsContent>
               </Tabs>
             </div>
           )}
         </section>
-      </section>
+      </section>}
     </main>
   );
 }
