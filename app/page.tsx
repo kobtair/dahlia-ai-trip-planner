@@ -55,22 +55,16 @@ const INTERESTS = [
   { id: 'architecture', label: 'Architecture', icon: MapPin },
 ];
 
-function isoDate(offset: number) {
-  const value = new Date();
-  value.setDate(value.getDate() + offset);
-  return value.toISOString().slice(0, 10);
-}
-
 const DEFAULT_FORM: TripForm = {
-  prompt: 'A long weekend with local food, design, and time to wander',
-  origin: 'London',
-  destination: 'Lisbon',
-  startDate: isoDate(7),
-  endDate: isoDate(10),
-  travelers: 2,
-  budget: 1400,
+  prompt: '',
+  origin: '',
+  destination: '',
+  startDate: '',
+  endDate: '',
+  travelers: 0,
+  budget: 0,
   pace: 'balanced',
-  interests: ['food', 'art', 'history'],
+  interests: [],
 };
 
 async function requestTrip(form: TripForm) {
@@ -105,6 +99,30 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const formRef = useRef(form);
+  const [interpreting, setInterpreting] = useState(false);
+  const [assistantMessage, setAssistantMessage] = useState('');
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [answer, setAnswer] = useState('');
+
+  async function interpret(message = form.prompt) {
+    if (interpreting || loading || readOnly) return;
+    setInterpreting(true);
+    setError('');
+    try {
+      const response = await fetch('/api/brief', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message, current: form, previousQuestions: questions }),
+      });
+      const data = await response.json() as { error?: string; updates: Partial<TripForm>; message: string; questions: string[] };
+      if (!response.ok) throw new Error(data.error || 'Could not interpret your trip.');
+      setForm((current) => ({ ...current, ...data.updates, prompt: message === current.prompt ? current.prompt : current.prompt + '\n' + message }));
+      setBudgetDraft(null);
+      setAssistantMessage(data.message);
+      setQuestions(data.questions);
+      setAnswer('');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'AI is temporarily unavailable.'); }
+    finally { setInterpreting(false); }
+  }
 
   useEffect(() => {
     formRef.current = form;
@@ -217,34 +235,10 @@ export default function Home() {
 
   function revise(kind?: 'cheaper' | 'slower' | 'food') {
     if (!plan || readOnly) return;
-    const instruction = kind || (revisionText.toLowerCase().includes('cheap') ? 'cheaper' : revisionText.toLowerCase().includes('slow') ? 'slower' : revisionText.toLowerCase().includes('food') ? 'food' : undefined);
-    if (!instruction) {
-      setError('Try “make it cheaper”, “slow it down”, or “add more food”.');
-      return;
-    }
+    const message = kind === 'slower' ? 'Make this trip slower paced.' : kind === 'food' ? 'Prioritize local food.' : kind === 'cheaper' ? 'Prioritize affordable places. Do not invent lower prices.' : revisionText;
+    if (!message.trim()) return;
+    void interpret(message);
     setRevisionText('');
-    if (instruction === 'food') {
-      const next = { ...form, interests: Array.from(new Set(['food', ...form.interests])), prompt: `${form.prompt}. Prioritize local food.` };
-      setForm(next);
-      void buildTrip(next, 'Added more local food and re-ranked the real places.');
-      return;
-    }
-    const nextPlan = structuredClone(plan);
-    if (instruction === 'slower') {
-      nextPlan.itinerary = nextPlan.itinerary.map((day) => ({ ...day, items: day.items.slice(0, 2), route: { ...day.route, geometry: undefined } }));
-      nextPlan.spec.pace = 'slow';
-      nextPlan.validation.pace = 'pass';
-      setForm((current) => ({ ...current, pace: 'slow' }));
-      setRevisions((current) => ['Slowed the plan to two places per day.', ...current]);
-    } else {
-      nextPlan.budget.lines = nextPlan.budget.lines.map((line) => line.label === 'Activities' || line.label === 'Food allowance' ? { ...line, amount: Math.round(line.amount * 0.78) } : line);
-      nextPlan.budget.total = nextPlan.budget.lines.reduce((sum, line) => sum + line.amount, 0);
-      nextPlan.budget.status = nextPlan.budget.budget > 0 && nextPlan.budget.total > nextPlan.budget.budget ? 'over' : 'on-track';
-      nextPlan.validation.budget = nextPlan.budget.status === 'over' ? 'fail' : 'pass';
-      setRevisions((current) => [`Trimmed estimated food and activity spend by $${plan.budget.total - nextPlan.budget.total}.`, ...current]);
-    }
-    setPlan(nextPlan);
-    localStorage.setItem('dahlia-last-trip', JSON.stringify({ form: formRef.current, plan: nextPlan, revisions }));
   }
 
   function saveTrip() {
@@ -265,7 +259,9 @@ export default function Home() {
   }
 
   function resetTrip() {
-    const next = { ...DEFAULT_FORM, startDate: isoDate(7), endDate: isoDate(10) };
+    if (loading || interpreting) return;
+    setAssistantMessage(''); setQuestions([]); setAnswer('');
+    const next = { ...DEFAULT_FORM };
     setForm(next); setPlan(null); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -298,11 +294,17 @@ export default function Home() {
             </div>
 
             <form onSubmit={submit} className="mt-7 space-y-4">
+              <fieldset disabled={interpreting || loading} className="space-y-4">
               <div className="rounded-[1.5rem] bg-[#f8f3e8] p-3 text-[#18372f] shadow-[0_22px_70px_rgba(0,0,0,.22)]">
-                <label htmlFor="trip-idea" className="px-2 text-[11px] font-bold uppercase tracking-[0.13em] text-[#18372f]/55">Tell Dahlia the vibe</label>
+                <label htmlFor="trip-idea" className="px-2 text-[11px] font-bold uppercase tracking-[0.13em] text-[#18372f]/55">Describe your trip — AI fills the details</label>
                 <textarea id="trip-idea" value={form.prompt} onChange={(event) => setForm({ ...form, prompt: event.target.value })} disabled={readOnly} rows={3} className="mt-1 w-full resize-none bg-transparent px-2 text-[15px] leading-6 outline-none disabled:opacity-70" />
               </div>
 
+              {!readOnly && <Button type="button" onClick={() => void interpret()} disabled={!form.prompt.trim()} className="w-full rounded-full">{interpreting ? 'Reading your trip details…' : 'Fill details with AI'}</Button>}
+              {assistantMessage && <div aria-live="polite" className="rounded-2xl bg-white/10 p-4 text-sm leading-6">
+                <p>{assistantMessage}</p>
+                {questions.length > 0 ? <><ul className="mt-2 list-disc pl-4">{questions.map((question) => <li key={question}>{question}</li>)}</ul><Input aria-label="Answer Dahlia’s questions" value={answer} onChange={(event) => setAnswer(event.target.value)} className="mt-3 rounded-xl" placeholder="Answer here, or edit the fields below" /><Button type="button" onClick={() => void interpret(answer)} disabled={!answer.trim()} className="mt-2 rounded-full">Update details</Button></> : <p className="mt-2">Review the filled fields below, then build your itinerary.</p>}
+              </div>}
               <div className="rounded-[1.5rem] border border-white/12 bg-white/7 p-4 backdrop-blur-sm">
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-xs font-bold uppercase tracking-[0.13em] text-white/55">The essentials</p>
@@ -313,7 +315,7 @@ export default function Home() {
                   <label className="field-shell" htmlFor="destination"><span>Where to</span><Input id="destination" value={form.destination} onChange={(event) => setForm({ ...form, destination: event.target.value })} disabled={readOnly} required aria-label="Destination" /></label>
                   <label className="field-shell" htmlFor="start-date"><span>Start</span><Input id="start-date" type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} disabled={readOnly} required aria-label="Start date" /></label>
                   <label className="field-shell" htmlFor="end-date"><span>End</span><Input id="end-date" type="date" value={form.endDate} min={form.startDate} onChange={(event) => setForm({ ...form, endDate: event.target.value })} disabled={readOnly} required aria-label="End date" /></label>
-                  <label className="field-shell" htmlFor="travelers"><span>Travelers</span><Input id="travelers" type="number" min={1} max={12} value={form.travelers} onChange={(event) => setForm({ ...form, travelers: Number(event.target.value) })} disabled={readOnly} aria-label="Travelers" /></label>
+                  <label className="field-shell" htmlFor="travelers"><span>Travelers</span><Input id="travelers" type="number" min={1} max={12} value={form.travelers || ''} required onChange={(event) => setForm({ ...form, travelers: Number(event.target.value) })} disabled={readOnly} aria-label="Travelers" /></label>
                   <label className="field-shell" htmlFor="budget"><span>Budget · {form.currency || 'USD'}</span><Input id="budget" type="text" inputMode="decimal" placeholder="No limit" value={budgetDraft ?? (form.budget ? form.budget.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '')} onFocus={(event) => { setBudgetDraft(form.budget ? String(form.budget) : ''); event.currentTarget.select(); }} onChange={(event) => {
                     const value = event.target.value.replace(/[$,\s]/g, '');
                     if (!/^\d*(\.\d{0,2})?$/.test(value)) return;
@@ -347,6 +349,7 @@ export default function Home() {
                 {loading ? <><LoaderCircle className="size-4 animate-spin" /> Finding real places & routes</> : <><WandSparkles className="size-4" /> Build my trip <ArrowRight className="ml-auto size-4" /></>}
               </Button>}
               {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/20 bg-red-300/10 p-3 text-xs leading-5 text-red-100"><CircleAlert className="mt-0.5 size-4 shrink-0" />{error}<button type="button" onClick={() => setError('')} className="ml-auto"><X className="size-4" /></button></div>}
+              </fieldset>
             </form>
           </div>
         </aside>
