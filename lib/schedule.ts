@@ -8,8 +8,8 @@ export function dayCapacity(remaining: number, daysLeft: number, perDay: number)
   return Math.min(perDay, Math.ceil(remaining / daysLeft));
 }
 
-export function scheduleTimes(count: number, legs: number[], visitMinutes: number, travelLimit: number) {
-  let cursor = 570; // 09:30 destination local time; never a UTC timestamp.
+export function scheduleTimes(count: number, legs: number[], visitMinutes: number, travelLimit: number, startMinutes = 570) {
+  let cursor = startMinutes;
   let totalTravel = 0;
   const time = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
   return Array.from({ length: count }, (_, index) => {
@@ -17,6 +17,7 @@ export function scheduleTimes(count: number, legs: number[], visitMinutes: numbe
     if (!Number.isFinite(travel) || travel < 0) throw new Error('A transfer time could not be verified. Please rebuild this trip.');
     totalTravel += travel;
     cursor += travel;
+    if (cursor < 13 * 60 + 30 && cursor + visitMinutes > 12 * 60 + 30) cursor = 13 * 60 + 30;
     if (totalTravel > travelLimit || cursor + visitMinutes > 18 * 60) throw new Error('These places cannot fit into a practical walking day. Choose a closer base or different activities; long transfers are not supported yet.');
     const startTime = time(cursor);
     cursor += visitMinutes;

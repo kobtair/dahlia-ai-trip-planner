@@ -33,3 +33,25 @@ test('invalid output stops after two attempts; provider errors are not retried',
   await assert.rejects(selectVerifiedPlaces(ids, async () => { attempts++; throw new Error('billing'); }), /billing/);
   assert.equal(attempts, 1);
 });
+
+test('duplicate and unknown entries do not discard otherwise sufficient verified places', async () => {
+  let calls = 0;
+  const result = await selectVerifiedPlaces(ids, async () => {
+    calls++;
+    return { places: [good.places[0], good.places[0], { id: 'invented', reason: 'No source' }, { id: ids[1], reason: 'Another sourced stop' }], limitations: [] };
+  }, 2);
+  assert.deepEqual(result.places.map((place) => place.id), ids);
+  assert.equal(calls, 1);
+});
+
+test('retry keeps verified selections and requests enough distinct places', async () => {
+  let calls = 0;
+  const result = await selectVerifiedPlaces(ids, async (_schema, retry, feedback) => {
+    calls++;
+    if (!retry) return good;
+    assert.match(feedback, /wiki-123/);
+    return { places: [{ id: ids[1], reason: 'Verified second stop' }], limitations: [] };
+  }, 2);
+  assert.equal(calls, 2);
+  assert.equal(result.places.length, 2);
+});

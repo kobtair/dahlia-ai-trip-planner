@@ -3,6 +3,8 @@ import { CURRENCIES } from '@/lib/currencies';
 import { briefReady } from '@/lib/brief-readiness';
 import { inclusiveEndDate } from '@/lib/schedule';
 import { wantsCountryRoute } from '@/lib/country-route';
+import { briefSummary } from '@/lib/brief-summary';
+import { explicitCurrency, explicitTravelers } from '@/lib/explicit-trip-details';
 
 const nullableText = { type: ['string', 'null'] };
 const schema = objectSchema({
@@ -10,6 +12,7 @@ const schema = objectSchema({
   durationDays: { type: ['integer', 'null'] },
   destinationScope: { type: 'string', enum: ['city', 'country', 'region', 'unknown'] },
   travelers: { type: ['integer', 'null'] }, budget: { type: ['number', 'null'] },
+  travelerEvidence: { type: ['string', 'null'], description: 'Exact quote from the user explicitly stating party size, e.g. just me or two people. First-person I am traveling is not evidence. Null when unspecified.' },
   currency: { type: ['string', 'null'], enum: [...CURRENCIES, null] },
   pace: { type: ['string', 'null'], enum: ['slow', 'balanced', 'full', null] },
   interests: { type: 'array', items: { type: 'string' } },
@@ -44,12 +47,18 @@ export async function POST(request: Request) {
       if (!Number.isInteger(result.travelers) || result.travelers < 1 || result.travelers > 12) throw new Error('This MVP supports 1–12 travelers.');
       updates.travelers = result.travelers;
     }
+    const explicitCount = explicitTravelers(`${body.current?.prompt || ''}\n${body.message}`);
+    updates.travelers = explicitCount ?? (body.current?.travelersConfirmed ? body.current.travelers : 0);
+    updates.travelersConfirmed = Number(updates.travelers) > 0;
+    const currency = explicitCurrency(body.message, CURRENCIES);
+    if (currency) updates.currency = currency;
     if (typeof result.budget === 'number') {
       if (!Number.isFinite(result.budget) || result.budget < 0) throw new Error('Please provide a positive budget or say no limit.');
       updates.budget = result.budget;
     }
     if (Array.isArray(result.interests)) updates.interests = result.interests.filter((v) => typeof v === 'string').slice(0, 8);
     let questions = Array.isArray(result.questions) ? result.questions.filter((v) => typeof v === 'string').slice(0, 8) : [];
+    if (updates.travelersConfirmed) questions = questions.filter((question) => !/how many.*(travel|people)|number of travel/i.test(question));
     const needsFallbackQuestions = questions.length === 0;
     if (!updates.origin) questions.push('Which city will you be starting from? You can type it or use the location button.');
     const countryRoute = wantsCountryRoute(`${body.message} ${body.current?.prompt || ''}`, String(result.destinationScope));
@@ -62,7 +71,8 @@ export async function POST(request: Request) {
       const days = (Date.parse(String(updates.endDate)) - Date.parse(String(updates.startDate))) / 86400000 + 1;
       if (days < 1 || days > 7) questions.push('This MVP supports 1–7 days. Which dates within that range should I use?');
     }
-    return Response.json({ updates, message: result.message, questions, ready: briefReady(updates, questions), model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' });
+    if (!updates.travelers && !questions.some((question) => /how many|travelers|travellers|party size/i.test(question))) questions.push('How many people are traveling?');
+    return Response.json({ updates, message: briefSummary(updates), questions, ready: briefReady(updates, questions), model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'Could not interpret this trip.' }, { status: 503 });
   }

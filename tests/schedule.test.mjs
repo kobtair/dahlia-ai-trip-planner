@@ -17,5 +17,5 @@ test('rejects impossible 1000 and 1553 minute transfers instead of formatting 27
   assert.throws(() => scheduleTimes(3, [1000, 1553], 90, 100), /cannot fit/);
   assert.throws(() => scheduleTimes(2, [NaN], 90, 100));
   assert.throws(() => scheduleTimes(6, [10,10,10,10,10], 90, 100));
-  assert.deepEqual(scheduleTimes(2, [20], 90, 100)[1], { startTime: '11:20', endTime: '12:50', travelMinutesFromPrevious: 20 });
+  assert.deepEqual(scheduleTimes(2, [20], 90, 100)[1], { startTime: '13:30', endTime: '15:00', travelMinutesFromPrevious: 20 });
 });

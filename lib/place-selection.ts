@@ -28,11 +28,30 @@ export function validatePlaceSelection(value: unknown, ids: string[]): Selection
 }
 
 // Retry only invalid selections, not billing, configuration or provider errors.
-export async function selectVerifiedPlaces(ids: string[], generate: (schema: object, retry: boolean) => Promise<unknown>): Promise<Selection> {
+export async function selectVerifiedPlaces(ids: string[], generate: (schema: object, retry: boolean, feedback?: string) => Promise<unknown>, minimum = 1): Promise<Selection> {
   const schema = placeSelectionSchema(ids);
+  const allowed = new Set(ids);
+  const accepted = new Map<string, { id: string; reason: string }>();
+  const limitations = new Set<string>();
+  let feedback = '';
   for (let attempt = 0; attempt < 2; attempt++) {
-    const selection = validatePlaceSelection(await generate(schema, attempt > 0), ids);
-    if (selection) return selection;
+    const raw = await generate(schema, attempt > 0, feedback);
+    let unknown = 0, malformed = 0, duplicate = 0;
+    if (raw && typeof raw === 'object') {
+      const result = raw as Selection;
+      if (Array.isArray(result.limitations)) for (const note of result.limitations) if (typeof note === 'string') limitations.add(note);
+      if (Array.isArray(result.places)) for (const place of result.places) {
+        if (!place || typeof place.id !== 'string' || typeof place.reason !== 'string' || !place.reason.trim()) { malformed++; continue; }
+        if (!allowed.has(place.id)) { unknown++; continue; }
+        if (accepted.has(place.id)) { duplicate++; continue; }
+        accepted.set(place.id, { id: place.id, reason: place.reason.trim() });
+      }
+      else malformed++;
+    } else malformed++;
+    if (accepted.size >= minimum) return { places: [...accepted.values()], limitations: [...limitations] };
+    console.warn('Dahlia selection validation', { attempt: attempt + 1, offered: ids.length, accepted: accepted.size, minimum, unknown, malformed, duplicate });
+    feedback = `Retain these already verified selections: ${[...accepted.keys()].join(', ')}. Provide at least ${minimum} distinct suitable places in total if the candidate evidence supports them. Previous response had ${unknown} unknown IDs, ${malformed} malformed entries and ${duplicate} duplicates. Do not repeat IDs or add unsuitable places just to meet the count.`;
   }
-  throw new Error('We could not safely match the AI recommendations to sourced places. No unverified places were added. Please try again.');
+  if (accepted.size) throw new Error(`We could verify ${accepted.size} suitable places, but need ${minimum} for this trip. Try broadening your interests or shortening the trip.`);
+  throw new Error('The place selection could not be completed. Your trip details are saved; please retry building. No unverified places were added.');
 }

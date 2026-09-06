@@ -2,6 +2,9 @@
 
 import { SyntheticEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
+import { HospitalityOptions } from '@/components/hospitality-options';
+import type { HospitalityPlace } from '@/lib/hospitality';
+import { encodeTrip, decodeTrip } from '@/lib/share-trip';
 import { GrowingTextarea } from '@/components/growing-textarea';
 import { ItineraryMap } from '@/components/itinerary-map';
 import { CURRENCIES } from '@/lib/currencies';
@@ -18,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type TripForm = {
+  travelersConfirmed?: boolean;
   durationDays?: number;
   destinationScope?: 'city' | 'country' | 'region' | 'unknown';
   prompt: string;
@@ -43,7 +47,7 @@ type TripPlan = {
   tripId: string;
   spec: TripForm & { days: number };
   destination: { name: string; country?: string; latitude: number; longitude: number; timezone?: string; summary?: string; imageUrl?: string; sourceUrl?: string };
-  itinerary: Array<{ day: number; date: string; title: string; items: PlaceItem[]; route: { distanceKm: number; durationMinutes: number; source: string; status: string; geometry?: { coordinates: [number, number][] } } }>;
+  itinerary: Array<{ day: number; date: string; title: string; hospitality?: { restaurants: HospitalityPlace[]; hotels: HospitalityPlace[]; note: string }; logistics?: Array<{ time: string; title: string; detail: string }>; items: PlaceItem[]; route: { distanceKm: number; durationMinutes: number; source: string; status: string; geometry?: { coordinates: [number, number][] } } }>;
   weather: { available: boolean; status: string; note?: string; timezone?: string; daily?: Array<{ date: string; high: number; low: number; precipitation: number; description: string }> };
   budget: { currency: string; budget: number; total: number; status: string; lines: Array<{ label: string; amount: number; status: string }> };
   validation: { dates: string; overlap: string; pace: string; openingHours: string; budget: string; note: string };
@@ -198,6 +202,15 @@ export default function Home() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      const snapshot = new URLSearchParams(window.location.hash.slice(1)).get('trip');
+      if (snapshot) {
+        setReadOnly(true);
+        void decodeTrip(snapshot).then((shared) => {
+          if (shared.version !== 1 || !shared.plan?.spec || !Array.isArray(shared.plan.itinerary) || shared.plan.itinerary.length < 1 || shared.plan.itinerary.length > 7) throw new Error('Invalid trip');
+          setPlan(shared.plan); setForm(shared.plan.spec); setActiveDay(shared.plan.itinerary[0].day);
+        }).catch(() => setError('This shared trip link is invalid or incomplete. Ask the sender for a fresh link.'));
+        return;
+      }
       const params = new URLSearchParams(window.location.search);
       if (params.get('share') === '1') {
         const shared: TripForm = {
@@ -300,19 +313,21 @@ export default function Home() {
   }
 
   async function shareTrip() {
-    const params = new URLSearchParams({
-      share: '1', destination: form.destination, origin: form.origin, start: form.startDate, end: form.endDate,
-      travelers: String(form.travelers), budget: String(form.budget), currency: form.currency || 'USD', pace: form.pace,
-      interests: form.interests.join(','), prompt: form.prompt,
-    });
-    const url = `${window.location.origin}${window.location.pathname}?${params}`;
-    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2200); }
-    catch { window.prompt('Copy this read-only trip link:', url); }
+    if (!plan) return;
+    try {
+      const payload = structuredClone(plan);
+      // Route geometry is large; maps retain sourced markers and estimated connections.
+      payload.itinerary.forEach((day) => { delete day.route.geometry; });
+      const url = window.location.origin + window.location.pathname + '#trip=' + await encodeTrip({ version: 1, plan: payload });
+      try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2200); }
+      catch { window.prompt('Copy this trip link:', url); }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not create a share link.'); }
   }
 
   function resetTrip() {
     if (loading || interpreting) return;
     setAssistantMessage(''); setQuestions([]); setAnswer(''); setBuildFailed(false); setMessages([]); setChatOpen(false); setActiveDay(1);
+    window.history.replaceState(null, '', window.location.pathname);
     const next = { ...DEFAULT_FORM };
     setForm(next); setPlan(null); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
     window.history.replaceState({}, '', window.location.pathname);
@@ -398,6 +413,8 @@ export default function Home() {
                     <div className="space-y-8">
                       {plan.itinerary.filter((day) => day.day === activeDay).map((day) => (
                         <article key={day.day}>
+                          {day.hospitality && <HospitalityOptions options={day.hospitality} />}
+                          {day.logistics && <details className="mb-4 rounded-xl border p-4" open><summary className="cursor-pointer text-sm font-semibold">Meals, stays & travel · {day.date}</summary><div className="mt-3 space-y-3">{day.logistics.map((block) => <div key={block.title} className="text-sm"><span className="text-xs text-muted-foreground">{block.time}</span><p className="font-medium">{block.title}</p><p className="text-xs leading-5 text-muted-foreground">{block.detail}</p></div>)}</div></details>}
                           <div className="mb-3 flex items-end justify-between gap-4">
                             <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#173c35] font-mono text-xs text-white">{String(day.day).padStart(2, '0')}</span><div><h3 className="font-heading text-lg font-semibold tracking-tight">{day.title}</h3><p className="text-xs text-muted-foreground">{formatDate(day.date)}</p></div></div>
                             <span className="hidden text-xs text-muted-foreground sm:inline">{day.route.distanceKm} km · {day.route.durationMinutes} min between stops</span>

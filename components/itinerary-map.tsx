@@ -60,7 +60,7 @@ export function ItineraryMap({ itinerary, destination }: { itinerary: Day[]; des
     </div>
     {error && <p role="alert">{error}</p>}
     <section ref={container} aria-label="Itinerary places and routes" className="relative z-0 h-[520px] w-full rounded-xl border" />
-    <p className="mt-3 text-xs text-muted-foreground">Markers show day.stop. Solid lines follow walking routes; dashed lines connect stops when route data is unavailable. Older saved trips may need rebuilding for walking routes.</p>
+    <p className="mt-3 text-xs text-muted-foreground">Markers show day.stop. Solid lines follow the walking or car route indicated in the daily plan; dashed lines connect stops when route geometry is unavailable.</p>
     <div className="mt-4 grid gap-4 sm:grid-cols-2">{visible.map((day) => <div key={day.day}><h3 className="text-sm font-semibold" style={{ color: COLORS[(day.day - 1) % COLORS.length] }}>Day {day.day} · {day.title}</h3><ol className="mt-2 space-y-2 text-xs">{day.items.map((stop, index) => <li key={stop.id}>{day.day}.{index + 1} · {stop.name} <span className="text-muted-foreground">{stop.startTime}</span>{!Number.isFinite(stop.latitude) && ' · Coordinates unavailable'}</li>)}</ol></div>)}</div>
   </div>;
 }
