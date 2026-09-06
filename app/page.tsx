@@ -2,8 +2,9 @@
 
 import { SyntheticEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
+import { GrowingTextarea } from '@/components/growing-textarea';
 import { ItineraryMap } from '@/components/itinerary-map';
-import { CURRENCIES } from '@/components/trip-conversation';
+import { CURRENCIES } from '@/lib/currencies';
 import { PlanningProgress } from '@/components/planning-progress';
 import { PlacePhoto } from '@/components/place-photo';
 import {
@@ -13,10 +14,12 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type TripForm = {
+  durationDays?: number;
+  destinationScope?: 'city' | 'country' | 'region' | 'unknown';
   prompt: string;
   origin: string;
   destination: string;
@@ -67,11 +70,11 @@ const DEFAULT_FORM: TripForm = {
   interests: [],
 };
 
-async function requestTrip(form: TripForm) {
+async function requestTrip(form: TripForm, signal?: AbortSignal) {
   const response = await fetch('/api/plan', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(form),
+    body: JSON.stringify(form), signal,
   });
   const data = await response.json() as TripPlan | { error?: string };
   if (!response.ok) throw new Error('error' in data ? data.error || 'Could not build this trip.' : 'Could not build this trip.');
@@ -89,7 +92,7 @@ function StatusDot({ status }: { status: string }) {
 
 export default function Home() {
   const [form, setForm] = useState<TripForm>(DEFAULT_FORM);
-  const [budgetDraft, setBudgetDraft] = useState<string | null>(null);
+
   const [plan, setPlan] = useState<TripPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -103,25 +106,66 @@ export default function Home() {
   const [assistantMessage, setAssistantMessage] = useState('');
   const [questions, setQuestions] = useState<string[]>([]);
   const [answer, setAnswer] = useState('');
+  const [activeDay, setActiveDay] = useState(1);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [locating, setLocating] = useState(false);
+  async function suggestLocation() {
+    if (!navigator.geolocation) { setError('Location is unavailable. Please type your starting city.'); return; }
+    setLocating(true);
+    setError('');
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }));
+      const response = await fetch('/api/location', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ latitude: Number(position.coords.latitude.toFixed(2)), longitude: Number(position.coords.longitude.toFixed(2)) }) });
+      const data = await response.json() as { city?: string; error?: string };
+      if (!response.ok || !data.city) throw new Error(data.error);
+      setAnswer((text) => `${text}${text ? '\n' : ''}I am starting from ${data.city}.`);
+    } catch {
+      try {
+        const response = await fetch('/api/location', { method: 'POST' });
+        const data = await response.json() as { city?: string };
+        if (!response.ok || !data.city) throw new Error();
+        setAnswer((text) => `${text}${text ? '\n' : ''}I am starting from ${data.city} (approximate IP location).`);
+      } catch { setError('Location was denied or unavailable. Please type your starting city.'); }
+    }
+    finally { setLocating(false); }
+  }
+  const [messages, setMessages] = useState<Array<{role: string; text: string}>>([]);
+  const activeRequest = useRef<AbortController | null>(null);
+  const historyEnd = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const panel = historyEnd.current?.parentElement;
+    if (panel) panel.scrollTop = panel.scrollHeight;
+  }, [messages, questions, chatOpen]);
+  const [buildFailed, setBuildFailed] = useState(false);
+  const requestBusy = useRef(false);
 
   async function interpret(message = form.prompt) {
-    if (interpreting || loading || readOnly) return;
+    if (requestBusy.current || interpreting || loading || readOnly) return;
+    requestBusy.current = true;
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setInterpreting(true);
     setError('');
     try {
       const response = await fetch('/api/brief', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal: controller.signal,
         body: JSON.stringify({ message, current: form, previousQuestions: questions }),
       });
-      const data = await response.json() as { error?: string; updates: Partial<TripForm>; message: string; questions: string[] };
+      const data = await response.json() as { error?: string; updates: Partial<TripForm>; message: string; questions: string[]; ready: boolean };
       if (!response.ok) throw new Error(data.error || 'Could not interpret your trip.');
-      setForm((current) => ({ ...current, ...data.updates, prompt: message === current.prompt ? current.prompt : current.prompt + '\n' + message }));
-      setBudgetDraft(null);
+      const nextForm = { ...form, ...data.updates, prompt: message === form.prompt ? form.prompt : form.prompt + '\n' + message };
+      setForm(nextForm);
+      setMessages((items) => [...items, {role: 'You', text: message}, {role: 'Dahlia', text: data.message}].slice(-20));
       setAssistantMessage(data.message);
+      setChatOpen(data.questions.length > 0);
       setQuestions(data.questions);
       setAnswer('');
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'AI is temporarily unavailable.'); }
-    finally { setInterpreting(false); }
+      if (data.ready) {
+        setInterpreting(false);
+        await buildTrip(nextForm);
+      }
+    } catch (caught) { if (!controller.signal.aborted) setError(caught instanceof Error && !/fetch|network/i.test(caught.message) ? caught.message : 'Could not reach the planner. Your message is saved here—please try sending it again.'); }
+    finally { setInterpreting(false); requestBusy.current = false; }
   }
 
   useEffect(() => {
@@ -129,15 +173,23 @@ export default function Home() {
   }, [form]);
 
   async function buildTrip(nextForm = form, revision?: string) {
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setLoading(true);
+    setBuildFailed(false);
     setError('');
     try {
-      const nextPlan = await requestTrip(nextForm);
+      const nextPlan = await requestTrip(nextForm, controller.signal);
+      if (controller.signal.aborted) return;
+      setActiveDay(1);
+      setChatOpen(false);
       setPlan(nextPlan);
       setSaved(false);
       if (revision) setRevisions((current) => [revision, ...current].slice(0, 8));
       localStorage.setItem('dahlia-last-trip', JSON.stringify({ form: nextForm, plan: nextPlan, revisions: revision ? [revision, ...revisions] : revisions }));
     } catch (caught) {
+      if (controller.signal.aborted) return;
+      setBuildFailed(true);
       setError(caught instanceof Error ? caught.message : 'Could not build this trip.');
     } finally {
       setLoading(false);
@@ -198,7 +250,7 @@ export default function Home() {
         properties: {
           destination: { type: 'string' }, origin: { type: 'string' }, startDate: { type: 'string', format: 'date' },
           endDate: { type: 'string', format: 'date' }, travelers: { type: 'integer', minimum: 1, maximum: 12 },
-          budget: { type: 'number', minimum: 0 }, pace: { type: 'string', enum: ['slow', 'balanced', 'full'] },
+          budget: { type: 'number', minimum: 0 }, currency: { type: 'string', enum: CURRENCIES }, pace: { type: 'string', enum: ['slow', 'balanced', 'full'] },
           interests: { type: 'array', items: { type: 'string' }, maxItems: 8 }, prompt: { type: 'string' },
         },
         required: ['destination', 'startDate', 'endDate'], additionalProperties: false,
@@ -225,7 +277,7 @@ export default function Home() {
 
   function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!readOnly) void buildTrip();
+    if (!readOnly && answer.trim()) void interpret(answer);
   }
 
   function toggleInterest(id: string) {
@@ -260,7 +312,7 @@ export default function Home() {
 
   function resetTrip() {
     if (loading || interpreting) return;
-    setAssistantMessage(''); setQuestions([]); setAnswer('');
+    setAssistantMessage(''); setQuestions([]); setAnswer(''); setBuildFailed(false); setMessages([]); setChatOpen(false); setActiveDay(1);
     const next = { ...DEFAULT_FORM };
     setForm(next); setPlan(null); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
     window.history.replaceState({}, '', window.location.pathname);
@@ -269,7 +321,7 @@ export default function Home() {
   const featured = plan?.itinerary.flatMap((day) => day.items).find((item) => item.imageUrl);
 
   return (
-    <main className="dahlia-studio min-h-screen bg-background text-foreground">
+    <main className={`dahlia-studio workspace ${plan ? 'has-plan' : 'no-plan'} ${chatOpen ? 'chat-open' : ''} min-h-screen bg-background text-foreground`}>
       <header className="mx-auto flex h-20 max-w-[1540px] items-center justify-between px-5 sm:px-8">
         <button onClick={resetTrip} className="flex items-center gap-2.5" aria-label="Start a new Dahlia trip">
           <span className="grid size-9 place-items-center rounded-full bg-primary text-primary-foreground"><Compass className="size-[18px]" /></span>
@@ -284,107 +336,43 @@ export default function Home() {
       </header>
 
       <section className="mx-auto grid max-w-[1540px] gap-5 px-5 pb-8 sm:px-8 lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)]">
-        <aside className="planner-panel relative overflow-hidden rounded-[2rem] bg-[#173c35] text-white lg:sticky lg:top-4 lg:h-[calc(100vh-32px)]">
-          <div className="pointer-events-none absolute inset-0 opacity-35 [background:radial-gradient(circle_at_90%_0%,#8ce2ad,transparent_27%),radial-gradient(circle_at_5%_100%,#507d69,transparent_34%)]" />
-          <div className="relative flex h-full flex-col overflow-y-auto p-5 sm:p-7">
-            <div>
-              <span className="planner-eyebrow"><Sparkles className="size-3.5" /> YOUR NEXT CHAPTER</span>
-              <h1 className="mt-6 max-w-sm font-heading text-4xl font-medium leading-[0.96] tracking-[-0.055em] sm:text-5xl">Somewhere<br /><em>worth going.</em></h1>
-              <p className="planner-intro">A few details. A little daydreaming. A trip that feels like you.</p>
-            </div>
-
-            <form onSubmit={submit} className="mt-7 space-y-4">
-              <fieldset disabled={interpreting || loading} className="space-y-4">
-              <div className="rounded-[1.5rem] bg-[#f8f3e8] p-3 text-[#18372f] shadow-[0_22px_70px_rgba(0,0,0,.22)]">
-                <label htmlFor="trip-idea" className="px-2 text-[11px] font-bold uppercase tracking-[0.13em] text-[#18372f]/55">Describe your trip — AI fills the details</label>
-                <textarea id="trip-idea" value={form.prompt} onChange={(event) => setForm({ ...form, prompt: event.target.value })} disabled={readOnly} rows={3} className="mt-1 w-full resize-none bg-transparent px-2 text-[15px] leading-6 outline-none disabled:opacity-70" />
-              </div>
-
-              {!readOnly && <Button type="button" onClick={() => void interpret()} disabled={!form.prompt.trim()} className="w-full rounded-full">{interpreting ? 'Reading your trip details…' : 'Fill details with AI'}</Button>}
-              {assistantMessage && <div aria-live="polite" className="rounded-2xl bg-white/10 p-4 text-sm leading-6">
-                <p>{assistantMessage}</p>
-                {questions.length > 0 ? <><ul className="mt-2 list-disc pl-4">{questions.map((question) => <li key={question}>{question}</li>)}</ul><Input aria-label="Answer Dahlia’s questions" value={answer} onChange={(event) => setAnswer(event.target.value)} className="mt-3 rounded-xl" placeholder="Answer here, or edit the fields below" /><Button type="button" onClick={() => void interpret(answer)} disabled={!answer.trim()} className="mt-2 rounded-full">Update details</Button></> : <p className="mt-2">Review the filled fields below, then build your itinerary.</p>}
-              </div>}
-              <div className="rounded-[1.5rem] border border-white/12 bg-white/7 p-4 backdrop-blur-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-xs font-bold uppercase tracking-[0.13em] text-white/55">The essentials</p>
-                  <span className="text-xs text-muted-foreground">01 / 02</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="field-shell" htmlFor="origin"><span>From</span><Input id="origin" value={form.origin} onChange={(event) => setForm({ ...form, origin: event.target.value })} disabled={readOnly} aria-label="Origin" /></label>
-                  <label className="field-shell" htmlFor="destination"><span>Where to</span><Input id="destination" value={form.destination} onChange={(event) => setForm({ ...form, destination: event.target.value })} disabled={readOnly} required aria-label="Destination" /></label>
-                  <label className="field-shell" htmlFor="start-date"><span>Start</span><Input id="start-date" type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} disabled={readOnly} required aria-label="Start date" /></label>
-                  <label className="field-shell" htmlFor="end-date"><span>End</span><Input id="end-date" type="date" value={form.endDate} min={form.startDate} onChange={(event) => setForm({ ...form, endDate: event.target.value })} disabled={readOnly} required aria-label="End date" /></label>
-                  <label className="field-shell" htmlFor="travelers"><span>Travelers</span><Input id="travelers" type="number" min={1} max={12} value={form.travelers || ''} required onChange={(event) => setForm({ ...form, travelers: Number(event.target.value) })} disabled={readOnly} aria-label="Travelers" /></label>
-                  <label className="field-shell" htmlFor="budget"><span>Budget · {form.currency || 'USD'}</span><Input id="budget" type="text" inputMode="decimal" placeholder="No limit" value={budgetDraft ?? (form.budget ? form.budget.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '')} onFocus={(event) => { setBudgetDraft(form.budget ? String(form.budget) : ''); event.currentTarget.select(); }} onChange={(event) => {
-                    const value = event.target.value.replace(/[$,\s]/g, '');
-                    if (!/^\d*(\.\d{0,2})?$/.test(value)) return;
-                    setBudgetDraft(value);
-                    setForm((current) => ({ ...current, budget: Number(value) || 0 }));
-                  }} onBlur={() => setBudgetDraft(null)} disabled={readOnly} aria-label={`Budget in ${form.currency || 'USD'}`} /></label>
-                </div>
-                <div className="mt-2 grid grid-cols-[1fr_0.9fr] gap-2">
-                  <div className="field-shell">
-                    <span>Pace</span>
-                    <Select value={form.pace} onValueChange={(value) => setForm({ ...form, pace: value as TripForm['pace'] })} disabled={readOnly}>
-                      <SelectTrigger className="h-7 w-full border-0 p-0 text-white shadow-none"><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="slow">Slow</SelectItem><SelectItem value="balanced">Balanced</SelectItem><SelectItem value="full">Full days</SelectItem></SelectContent>
-                    </Select>
-                  </div>
-                  <label className="field-shell"><span>Currency</span><select aria-label="Budget currency" value={form.currency || 'USD'} disabled={readOnly} onChange={(event) => setForm({ ...form, currency: event.target.value })} className="mt-1 w-full bg-transparent text-sm">{CURRENCIES.map((currency) => <option key={currency}>{currency}</option>)}</select></label>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs font-medium text-white/55">What are you after?</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {INTERESTS.map(({ id, label, icon: Icon }) => {
-                    const active = form.interests.includes(id);
-                    return <button type="button" key={id} onClick={() => toggleInterest(id)} disabled={readOnly} aria-pressed={active} className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition ${active ? 'border-[#a8e7b9]/35 bg-[#a8e7b9] text-[#173c35]' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'}`}><Icon className="size-3.5" /> {label}</button>;
-                  })}
-                </div>
-              </div>
-
-              {!readOnly && <Button type="submit" disabled={loading} className="h-12 w-full rounded-full bg-[#f36943] text-white hover:bg-[#dd5733]">
-                {loading ? <><LoaderCircle className="size-4 animate-spin" /> Finding real places & routes</> : <><WandSparkles className="size-4" /> Build my trip <ArrowRight className="ml-auto size-4" /></>}
-              </Button>}
-              {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/20 bg-red-300/10 p-3 text-xs leading-5 text-red-100"><CircleAlert className="mt-0.5 size-4 shrink-0" />{error}<button type="button" onClick={() => setError('')} className="ml-auto"><X className="size-4" /></button></div>}
-              </fieldset>
-            </form>
+        <aside className="planner-panel chat-panel" aria-label="Chat with Dahlia">
+          <div className="chat-heading"><div><span className="planner-eyebrow">YOUR TRAVEL COMPANION</span><h1 className="font-heading">Where shall we go?</h1></div><button className="chat-toggle" aria-expanded={chatOpen} aria-controls="conversation" onClick={() => setChatOpen(!chatOpen)}>{chatOpen ? 'Close chat' : 'Conversation'}</button></div>
+          <div id="conversation" className="chat-history" role="log" aria-live="polite">
+            {!messages.length && <p>Tell me where you’re dreaming of. I’ll work out the details with you.</p>}
+            {messages.map((message, index) => <div key={index} className={message.role === 'You' ? 'chat-message from-user' : 'chat-message'}><strong>{message.role}</strong><p>{message.text}</p></div>)}
+            {questions.length > 0 && <div className="chat-message"><strong>A few details</strong><ul>{questions.map((question) => <li key={question}>{question}</li>)}</ul></div>}
+            <div ref={historyEnd} />
           </div>
+          <form onSubmit={submit} className="chat-composer">
+            {!form.origin && !readOnly && <div className="mb-2 text-xs"><button type="button" disabled={locating || loading || interpreting} onClick={() => void suggestLocation()} className="min-h-11 underline">{locating ? 'Finding your city…' : 'Use my location for starting city'}</button><p className="text-muted-foreground">With permission, approximate coordinates go to OpenStreetMap to suggest a city. Review it before sending, or type your departure city.</p></div>}
+            {(interpreting || loading) && <div role="status" className="chat-status"><LoaderCircle size={16} className="animate-spin" /><span>{interpreting ? 'Reading your request…' : plan ? 'Updating your trip. Your current plan is still available.' : 'Building your trip…'}</span><button type="button" onClick={() => { activeRequest.current?.abort(); setError('Stopped waiting. You can send another message. Server work may still finish.'); }}>Cancel</button></div>}
+            {error && <p role="alert" className="chat-error">{error}</p>}
+            {buildFailed && <Button type="button" disabled={loading || interpreting} onClick={() => void buildTrip(form)} variant="outline">Retry building</Button>}
+            {!readOnly && <><label htmlFor="chat-message" className="ai-answer-label">{plan ? 'Ask Dahlia to change your trip' : 'Tell Dahlia about your trip'}</label><GrowingTextarea id="chat-message" value={answer} onChange={(event) => setAnswer(event.target.value)} rows={2} className="ai-answer-input" placeholder={plan ? 'More local food, a slower day…' : 'Five days in Baku, just me, budget in PKR…'} disabled={loading || interpreting} /><Button type="submit" disabled={!answer.trim() || loading || interpreting} className="ai-update-button">{interpreting || loading ? 'Working…' : 'Send'}<ArrowRight size={16} /></Button></>}
+            <p className="exchange-attribution">Estimated costs · <a href="https://www.exchangerate-api.com" target="_blank" rel="noreferrer">ExchangeRate-API rates</a></p>
+          </form>
         </aside>
 
         <section className="trip-canvas min-w-0 overflow-hidden rounded-[2rem] border border-border bg-card">
-          {loading ? <PlanningProgress destination={form.destination} /> : !plan ? (
-            <div className="flex min-h-[calc(100vh-112px)] flex-col">
-              <div className="travel-cover">
-                <div className="cover-kicker"><span>THE ART OF GETTING AWAY</span><Compass size={20} /></div>
-                <div className="cover-art" aria-hidden="true"><div className="cover-sun" /><div className="cover-arch" /><div className="cover-horizon" /><span>38°43′ N · 9°08′ W</span></div>
-                <div className="cover-copy"><p>Less planning. More possibility.</p><h2>Leave room<br />for <em>wonder.</em></h2><p className="cover-description">Slow mornings, unexpected corners, and days<br className="hidden sm:block" /> that fall beautifully into place.</p></div>
-                <div className="cover-footer"><span><Map size={14} /> YOUR JOURNEY STARTS HERE</span><span>Made for your kind of travel ↗</span></div>
-              </div>
-              <div className="grid flex-1 gap-4 p-6 sm:grid-cols-3 sm:p-8">
-                {[['01', 'Real places', 'Named, mapped places from OpenStreetMap and Wikipedia.'], ['02', 'Feasible days', 'Non-overlapping times, walking routes and a pace check.'], ['03', 'Facts with labels', 'Forecasts are live. Budgets stay clearly estimated.']].map(([number, title, copy]) => (
-                  <div key={number} className="rounded-2xl border border-border p-5"><span className="font-mono text-xs text-[#d85d3e]">{number}</span><h3 className="mt-8 font-semibold">{title}</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">{copy}</p></div>
-                ))}
-              </div>
-            </div>
+          {!plan && loading ? <PlanningProgress destination={form.destination} /> : !plan ? (
+            <div className="workspace-welcome"><Compass size={32} /><h2 className="font-heading">A trip shaped around you.</h2><p>Describe your plans in chat. Your itinerary, map and budget will appear here.</p><p className="text-xs">Real places. Clear estimates. Room to explore.</p></div>
           ) : (
             <div>
-              <div className="relative min-h-[300px] overflow-hidden bg-[#d8dfd5] p-7 sm:p-9">
+              <div className="trip-summary relative overflow-hidden bg-[#d8dfd5] p-5">
                 {plan.destination.imageUrl || featured?.imageUrl ? <Image src={plan.destination.imageUrl || featured?.imageUrl || ''} alt={`View of ${plan.destination.name}`} fill unoptimized className="object-cover" /> : null}
                 <div className="absolute inset-0 bg-gradient-to-r from-[#142f2a]/95 via-[#142f2a]/65 to-transparent" />
-                <div className="relative flex min-h-[230px] max-w-xl flex-col justify-between text-white">
+                <div className="relative flex max-w-xl flex-col gap-3 text-white">
                   <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/65">
                     <span className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/10 px-3 py-1.5"><StatusDot status="live" /> Sourced just now</span>
                     <span>{plan.meta.engine}</span>
                   </div>
                   <div>
                     <p className="text-sm text-white/65">{plan.spec.days} days from {plan.spec.origin || 'home'}</p>
-                    <h2 className="mt-1 font-heading text-5xl font-medium tracking-[-0.055em] sm:text-6xl">{plan.destination.name}</h2>
+                    <h2 className="mt-1 font-heading text-3xl font-medium tracking-[-0.055em] sm:text-4xl">{plan.destination.name}</h2>
                     <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                      <span className="glass-chip"><CalendarDays className="size-3.5" /> {formatDate(form.startDate)} – {formatDate(form.endDate)}</span>
-                      <span className="glass-chip"><Users className="size-3.5" /> {form.travelers} {form.travelers === 1 ? 'traveler' : 'travelers'}</span>
+                      <span className="glass-chip"><CalendarDays className="size-3.5" /> {formatDate(plan.spec.startDate)} – {formatDate(plan.spec.endDate)}</span>
+                      <span className="glass-chip"><Users className="size-3.5" /> {plan.spec.travelers} {plan.spec.travelers === 1 ? 'traveler' : 'travelers'}</span>
                       {plan.weather.available && plan.weather.daily?.[0] && <span className="glass-chip"><CloudSun className="size-3.5" /> {plan.weather.daily[0].high}°C · {plan.weather.daily[0].description}</span>}
                     </div>
                   </div>
@@ -392,7 +380,7 @@ export default function Home() {
               </div>
 
               <Tabs defaultValue="plan" className="p-5 sm:p-8">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+                <div className="trip-navigation flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
                   <TabsList variant="line" className="gap-4">
                     <TabsTrigger value="plan" className="px-1">Day by day</TabsTrigger>
                     <TabsTrigger value="map" className="px-1">Map</TabsTrigger>
@@ -405,9 +393,10 @@ export default function Home() {
                 </div>
 
                 <TabsContent value="plan" className="pt-6">
+                  <nav className="day-navigation" aria-label="Itinerary day">{plan.itinerary.map((day) => <button key={day.day} aria-pressed={day.day === activeDay} onClick={() => setActiveDay(day.day)}>Day {day.day}</button>)}</nav>
                   <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_260px]">
                     <div className="space-y-8">
-                      {plan.itinerary.map((day) => (
+                      {plan.itinerary.filter((day) => day.day === activeDay).map((day) => (
                         <article key={day.day}>
                           <div className="mb-3 flex items-end justify-between gap-4">
                             <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#173c35] font-mono text-xs text-white">{String(day.day).padStart(2, '0')}</span><div><h3 className="font-heading text-lg font-semibold tracking-tight">{day.title}</h3><p className="text-xs text-muted-foreground">{formatDate(day.date)}</p></div></div>
@@ -439,10 +428,6 @@ export default function Home() {
                     </aside>
                   </div>
 
-                  {!readOnly && <div className="sticky bottom-4 z-10 mx-auto mt-9 max-w-2xl rounded-[1.4rem] border border-[#173c35]/12 bg-[#173c35] p-2.5 text-white shadow-[0_20px_60px_rgba(23,60,53,.28)]">
-                    <form onSubmit={(event) => { event.preventDefault(); revise(); }} className="flex items-center gap-2"><Sparkles className="ml-2 size-4 shrink-0 text-[#a8e7b9]" /><Input value={revisionText} onChange={(event) => setRevisionText(event.target.value)} placeholder="Ask Dahlia to change the plan…" className="h-10 border-0 bg-transparent text-sm text-white shadow-none placeholder:text-white/45 focus-visible:ring-0" /><Button type="submit" size="sm" className="rounded-full bg-white text-[#173c35] hover:bg-[#f5f0e5]">Apply</Button></form>
-                    <div className="flex flex-wrap gap-1.5 px-2 pb-1 pt-2"><button onClick={() => revise('cheaper')} className="revision-chip"><DollarSign className="size-3" /> Make it cheaper</button><button onClick={() => revise('slower')} className="revision-chip"><Footprints className="size-3" /> Slow it down</button><button onClick={() => revise('food')} className="revision-chip"><Utensils className="size-3" /> More local food</button></div>
-                  </div>}
                   {revisions.length > 0 && <details className="mt-4 rounded-2xl border border-border p-4"><summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium"><History className="size-4" /> Revision history <ChevronDown className="ml-auto size-4" /></summary><ul className="mt-3 space-y-2 text-xs text-muted-foreground">{revisions.map((revision, index) => <li key={`${revision}-${index}`} className="border-l border-[#f36943]/35 pl-3">{revision}</li>)}</ul></details>}
                 </TabsContent>
 

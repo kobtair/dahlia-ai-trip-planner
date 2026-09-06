@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react';
 import { Compass, MapPin, Route, CloudSun } from 'lucide-react';
 
-const MESSAGES = ['Looking for places that fit your trip', 'Putting together practical days', 'Checking routes and available forecasts', 'Bringing the details together'];
 export function PlanningProgress({ destination }: { destination: string }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => { const started = Date.now(); const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000); return () => clearInterval(timer); }, []);
@@ -11,7 +10,7 @@ export function PlanningProgress({ destination }: { destination: string }) {
       <div className="mb-8 grid size-16 place-items-center rounded-full bg-[#f5e7df] text-[#ab482f]"><Compass className="size-8 animate-[spin_12s_linear_infinite]" /></div>
       <p className="planner-eyebrow">YOUR TRIP IS TAKING SHAPE</p>
       <h2 className="mt-4 font-heading text-4xl leading-tight">A little closer to<br />{destination || 'your next adventure'}.</h2>
-<output aria-live="polite" className="block mt-5 text-sm text-muted-foreground">{elapsed >= 45 ? 'Still working — some travel data providers are taking longer to respond.' : MESSAGES[Math.min(Math.floor(elapsed / 8), MESSAGES.length - 1)]}</output>
+<output aria-live="polite" className="block mt-5 text-sm text-muted-foreground">{elapsed >= 45 ? 'This is taking longer than usual. You can keep waiting or cancel from chat.' : 'Your itinerary request is in progress. We’ll show the plan when it is ready.'}</output>
       <div className="mt-5 h-1 overflow-hidden rounded-full bg-[#e8e1d5]" aria-hidden="true"><div className="h-full w-1/3 animate-pulse rounded-full bg-[#ab482f]" /></div>
       <p className="mt-2 text-right text-xs text-muted-foreground" aria-hidden="true">{elapsed}s elapsed</p>
       <div className="mt-8 flex flex-wrap gap-4 text-xs text-muted-foreground"><span className="flex items-center gap-2"><MapPin size={14} /> Places</span><span className="flex items-center gap-2"><Route size={14} /> Routes</span><span className="flex items-center gap-2"><CloudSun size={14} /> Forecasts</span></div>

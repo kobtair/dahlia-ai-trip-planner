@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { CURRENCIES } from '@/lib/currencies';
 
 const questions = [
   ['destination', 'Where would you like to go?', 'text'],
@@ -11,7 +12,6 @@ const questions = [
   ['budget', 'What is your total trip budget for everyone? Leave blank for no limit.', 'number'],
   ['pace', 'What pace feels right for this trip?', 'pace'],
 ] as const;
-export const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR'];
 export function TripConversation({ onConfirm }: { onConfirm: (answers: Record<string, string>) => void }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [step, setStep] = useState(-1);
