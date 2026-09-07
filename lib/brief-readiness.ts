@@ -1,5 +1,5 @@
-export function briefReady(brief: Record<string, unknown>, questions: string[]) {
-  if (questions.length || typeof brief.destination !== 'string' || !brief.destination.trim()) return false;
+export function briefReady(brief: Record<string, unknown>, _questions: string[] = []) {
+  if (typeof brief.destination !== 'string' || !brief.destination.trim()) return false;
   if (typeof brief.origin !== 'string' || !brief.origin.trim()) return false;
   if (!Number.isInteger(brief.travelers) || Number(brief.travelers) < 1 || Number(brief.travelers) > 12) return false;
   const dates = [brief.startDate, brief.endDate];

@@ -5,6 +5,8 @@ import Image from 'next/image';
 import { HospitalityOptions } from '@/components/hospitality-options';
 import type { HospitalityPlace } from '@/lib/hospitality';
 import { encodeTrip, decodeTrip } from '@/lib/share-trip';
+import { appendConversationTurn, type ConversationMessage } from '@/lib/conversation';
+import type { TripAssumption } from '@/lib/trip-assumptions';
 import { GrowingTextarea } from '@/components/growing-textarea';
 import { ItineraryMap } from '@/components/itinerary-map';
 import { CURRENCIES } from '@/lib/currencies';
@@ -34,6 +36,7 @@ type TripForm = {
   currency?: string;
   pace: 'slow' | 'balanced' | 'full';
   interests: string[];
+  assumptions?: TripAssumption[];
 };
 
 type PlaceItem = {
@@ -107,7 +110,6 @@ export default function Home() {
   const [readOnly, setReadOnly] = useState(false);
   const formRef = useRef(form);
   const [interpreting, setInterpreting] = useState(false);
-  const [assistantMessage, setAssistantMessage] = useState('');
   const [questions, setQuestions] = useState<string[]>([]);
   const [answer, setAnswer] = useState('');
   const [activeDay, setActiveDay] = useState(1);
@@ -133,13 +135,14 @@ export default function Home() {
     }
     finally { setLocating(false); }
   }
-  const [messages, setMessages] = useState<Array<{role: string; text: string}>>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const messagesRef = useRef<ConversationMessage[]>([]);
   const activeRequest = useRef<AbortController | null>(null);
   const historyEnd = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const panel = historyEnd.current?.parentElement;
     if (panel) panel.scrollTop = panel.scrollHeight;
-  }, [messages, questions, chatOpen]);
+  }, [messages, chatOpen]);
   const [buildFailed, setBuildFailed] = useState(false);
   const requestBusy = useRef(false);
 
@@ -153,20 +156,25 @@ export default function Home() {
     try {
       const response = await fetch('/api/brief', {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ message, current: form, previousQuestions: questions }),
+        body: JSON.stringify({ message, current: formRef.current, previousQuestions: questions }),
       });
-      const data = await response.json() as { error?: string; updates: Partial<TripForm>; message: string; questions: string[]; ready: boolean };
+      const data = await response.json() as { error?: string; updates: Partial<TripForm>; message: string; questions: string[]; assumptions?: string[]; ready: boolean };
       if (!response.ok) throw new Error(data.error || 'Could not interpret your trip.');
-      const nextForm = { ...form, ...data.updates, prompt: message === form.prompt ? form.prompt : form.prompt + '\n' + message };
+      const currentForm = formRef.current;
+      const nextPrompt = [currentForm.prompt, message].filter(Boolean).join('\n');
+      const nextForm = { ...currentForm, ...data.updates, prompt: nextPrompt };
+      const nextMessages = appendConversationTurn(messagesRef.current, message, data.message, data.questions);
+      formRef.current = nextForm;
+      messagesRef.current = nextMessages;
       setForm(nextForm);
-      setMessages((items) => [...items, {role: 'You', text: message}, {role: 'Dahlia', text: data.message}].slice(-20));
-      setAssistantMessage(data.message);
-      setChatOpen(data.questions.length > 0);
+      setMessages(nextMessages);
+      setChatOpen(true);
       setQuestions(data.questions);
       setAnswer('');
+      localStorage.setItem('dahlia-last-trip', JSON.stringify({ form: nextForm, plan, revisions, messages: nextMessages }));
       if (data.ready) {
         setInterpreting(false);
-        await buildTrip(nextForm);
+        await buildTrip(nextForm, plan ? message : undefined, nextMessages);
       }
     } catch (caught) { if (!controller.signal.aborted) setError(caught instanceof Error && !/fetch|network/i.test(caught.message) ? caught.message : 'Could not reach the planner. Your message is saved here—please try sending it again.'); }
     finally { setInterpreting(false); requestBusy.current = false; }
@@ -176,7 +184,7 @@ export default function Home() {
     formRef.current = form;
   }, [form]);
 
-  async function buildTrip(nextForm = form, revision?: string) {
+  async function buildTrip(nextForm = formRef.current, revision?: string, conversation = messagesRef.current) {
     const controller = new AbortController();
     activeRequest.current = controller;
     setLoading(true);
@@ -186,11 +194,12 @@ export default function Home() {
       const nextPlan = await requestTrip(nextForm, controller.signal);
       if (controller.signal.aborted) return;
       setActiveDay(1);
-      setChatOpen(false);
+      setChatOpen(Boolean(conversation.at(-1)?.questions?.length));
       setPlan(nextPlan);
       setSaved(false);
-      if (revision) setRevisions((current) => [revision, ...current].slice(0, 8));
-      localStorage.setItem('dahlia-last-trip', JSON.stringify({ form: nextForm, plan: nextPlan, revisions: revision ? [revision, ...revisions] : revisions }));
+      const nextRevisions = revision ? [revision, ...revisions].slice(0, 8) : revisions;
+      if (revision) setRevisions(nextRevisions);
+      localStorage.setItem('dahlia-last-trip', JSON.stringify({ form: nextForm, plan: nextPlan, revisions: nextRevisions, messages: conversation }));
     } catch (caught) {
       if (controller.signal.aborted) return;
       setBuildFailed(true);
@@ -240,10 +249,15 @@ export default function Home() {
       const stored = localStorage.getItem('dahlia-last-trip');
       if (stored) {
         try {
-          const parsed = JSON.parse(stored) as { form?: TripForm; plan?: TripPlan; revisions?: string[] };
+          const parsed = JSON.parse(stored) as { form?: TripForm; plan?: TripPlan; revisions?: string[]; messages?: ConversationMessage[] };
           if (parsed.form) setForm(parsed.form);
           if (parsed.plan) setPlan(parsed.plan);
           if (parsed.revisions) setRevisions(parsed.revisions);
+          if (parsed.messages) {
+            messagesRef.current = parsed.messages;
+            setMessages(parsed.messages);
+            setQuestions(parsed.messages.at(-1)?.questions || []);
+          }
         } catch { localStorage.removeItem('dahlia-last-trip'); }
       }
     }, 0);
@@ -308,7 +322,7 @@ export default function Home() {
 
   function saveTrip() {
     if (!plan) return;
-    localStorage.setItem('dahlia-last-trip', JSON.stringify({ form, plan, revisions }));
+    localStorage.setItem('dahlia-last-trip', JSON.stringify({ form, plan, revisions, messages }));
     setSaved(true);
   }
 
@@ -326,7 +340,7 @@ export default function Home() {
 
   function resetTrip() {
     if (loading || interpreting) return;
-    setAssistantMessage(''); setQuestions([]); setAnswer(''); setBuildFailed(false); setMessages([]); setChatOpen(false); setActiveDay(1);
+    setQuestions([]); setAnswer(''); setBuildFailed(false); messagesRef.current = []; setMessages([]); setChatOpen(false); setActiveDay(1);
     window.history.replaceState(null, '', window.location.pathname);
     const next = { ...DEFAULT_FORM };
     setForm(next); setPlan(null); setRevisions([]); setError(''); setReadOnly(false); localStorage.removeItem('dahlia-last-trip');
@@ -355,8 +369,7 @@ export default function Home() {
           <div className="chat-heading"><div><span className="planner-eyebrow">YOUR TRAVEL COMPANION</span><h1 className="font-heading">Where shall we go?</h1></div><button className="chat-toggle" aria-expanded={chatOpen} aria-controls="conversation" onClick={() => setChatOpen(!chatOpen)}>{chatOpen ? 'Close chat' : 'Conversation'}</button></div>
           <div id="conversation" className="chat-history" role="log" aria-live="polite">
             {!messages.length && <p>Tell me where you’re dreaming of. I’ll work out the details with you.</p>}
-            {messages.map((message, index) => <div key={index} className={message.role === 'You' ? 'chat-message from-user' : 'chat-message'}><strong>{message.role}</strong><p>{message.text}</p></div>)}
-            {questions.length > 0 && <div className="chat-message"><strong>A few details</strong><ul>{questions.map((question) => <li key={question}>{question}</li>)}</ul></div>}
+            {messages.map((message, index) => <div key={index} className={message.role === 'You' ? 'chat-message from-user' : 'chat-message'}><strong>{message.role}</strong><p>{message.text}</p>{message.questions && message.questions.length > 0 && <><span className="chat-question-label">Optional refinements</span><ul>{message.questions.map((question) => <li key={question}>{question}</li>)}</ul></>}</div>)}
             <div ref={historyEnd} />
           </div>
           <form onSubmit={submit} className="chat-composer">

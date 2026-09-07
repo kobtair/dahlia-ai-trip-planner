@@ -278,6 +278,7 @@ body {
 .chat-message { margin-bottom: 16px; overflow-wrap: anywhere; }
 .chat-message strong { display: block; font-size: 10px; color: #8e3c28; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 5px; }
 .chat-message.from-user { border-radius: 12px; padding: 12px; background: #f1ede5; }
+.chat-question-label { display: block; margin-top: 10px; font-size: 10px; font-weight: 700; color: #8e3c28; text-transform: uppercase; letter-spacing: .08em; }
 .chat-message ul { list-style: disc; padding-left: 18px; }
 .chat-composer { flex-shrink: 0; padding: 16px; border-top: 1px solid #e5e0d7; background: #fffefa; }
 .chat-composer .ai-update-button { margin-top: 10px; }
